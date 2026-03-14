@@ -5,12 +5,12 @@ import java.util.Iterator;
 import java.util.List;
 
 /**
- * CallbackMonitor — Member C
+ * Purpose of CallbackMonitor:
  *
  * Server-side component that manages the monitoring/callback service described
  * in the lab manual (Section 5.2, Service 4).
  *
- * ─── How it works ────────────────────────────────────────────────────────────
+ *  How it works:
  *
  *  1. A client sends a REGISTER_MONITOR request containing a monitor interval
  *     (in seconds).
@@ -30,17 +30,12 @@ import java.util.List;
  *
  *  5. Multiple clients can be registered concurrently (the list supports this).
  *
- * ─── Message format for callbacks ───────────────────────────────────────────
+ *  Message format for callbacks: [must check along with member B]
  *
  *  Callbacks are plain UTF-8 strings prepended with a 1-byte type tag:
  *    byte[0]  = 0x0A  (operation code: ACCOUNT_UPDATE)
  *    byte[1..] = UTF-8 update string, e.g.:
- *               "OPEN|acc=1001|name=Alice|currency=SGD|balance=500.00"
- *               "DEPOSIT|acc=1001|amount=200.00|newBalance=700.00"
- *               "WITHDRAW|acc=1001|amount=100.00|newBalance=600.00"
- *               "CLOSE|acc=1001|name=Alice"
- *               "TRANSFER|from=1001|to=1002|amount=50.00"
- *
+ *               "OPEN|acc=1001|name=Alice|currency=SGD|balance=500.00" 
  * Usage (inside server main loop — call notifyAll after every account update):
  *
  *   CallbackMonitor monitor = new CallbackMonitor(socket);
@@ -53,8 +48,7 @@ import java.util.List;
  */
 public class CallbackMonitor {
 
-    // ─── Inner record ────────────────────────────────────────────────────────
-
+    // Inner record 
     /**
      * Holds the registration info for one monitoring client.
      */
@@ -80,15 +74,11 @@ public class CallbackMonitor {
         }
     }
 
-    // ─── Fields ──────────────────────────────────────────────────────────────
-
     /** Operation code placed in byte[0] of every callback message. */
     public static final byte OP_ACCOUNT_UPDATE = 0x0A;
 
     private final DatagramSocket      socket;
     private final List<MonitorClient> monitors = new ArrayList<>();
-
-    // ─── Constructor ─────────────────────────────────────────────────────────
 
     /**
      * @param socket  The server's existing DatagramSocket (shared for callbacks).
@@ -97,8 +87,6 @@ public class CallbackMonitor {
         this.socket = socket;
         System.out.println("[CallbackMonitor] Initialised.");
     }
-
-    // ─── Public API ──────────────────────────────────────────────────────────
 
     /**
      * Registers a new monitoring client.
@@ -154,8 +142,8 @@ public class CallbackMonitor {
         }
     }
 
-    /**
-     * Returns the number of currently active (non-expired) monitor registrations.
+    /** 
+    * Returns the number of currently active (non-expired) monitor registrations.
      */
     public int activeCount() {
         purgeExpired();
@@ -175,8 +163,6 @@ public class CallbackMonitor {
                     + " expired monitor(s).  Active: " + monitors.size());
         }
     }
-
-    // ─── Message building ────────────────────────────────────────────────────
 
     /**
      * Constructs the raw bytes for a callback update message.
@@ -206,7 +192,7 @@ public class CallbackMonitor {
         return new String(data, 1, length - 1, java.nio.charset.StandardCharsets.UTF_8);
     }
 
-    // ─── Client-side helper: block and receive callbacks ─────────────────────
+    // Client-side helper: block and receive callbacks 
 
     /**
      * Called on the CLIENT side after sending a REGISTER_MONITOR request.
@@ -241,7 +227,7 @@ public class CallbackMonitor {
         System.out.println("[Client] Monitoring interval expired.");
     }
 
-    // ─── Quick self-test ─────────────────────────────────────────────────────
+    // Quick self-test 
     public static void main(String[] args) throws Exception {
         // Simulate a server socket
         DatagramSocket fakeSocket = new DatagramSocket(2223);
