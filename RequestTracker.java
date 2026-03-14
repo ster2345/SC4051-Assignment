@@ -1,8 +1,7 @@
 import java.util.Random;
 
 /**
- * RequestTracker — Member C
- *
+ Purpose of RequestTracker:
  * Manages the (clientId, requestId) pair used to uniquely identify every
  * request this client sends.  The server uses the same key to implement
  * duplicate detection under at-most-once semantics.
@@ -11,13 +10,9 @@ import java.util.Random;
  * requestId  – a counter that increments by 1 for every new request.
  *
  * Unique request key = clientId + "-" + requestId
- * e.g.  "47832-1", "47832-2", …
+ * e.g.  "47832-1"
  */
 public class RequestTracker {
-
-    // -----------------------------------------------------------------------
-    // Fields
-    // -----------------------------------------------------------------------
 
     /** Randomly assigned when the client starts.  Never changes. */
     private final int clientId;
@@ -25,19 +20,11 @@ public class RequestTracker {
     /** Increments with every new request sent by this client. */
     private int requestCounter;
 
-    // -----------------------------------------------------------------------
-    // Constructor
-    // -----------------------------------------------------------------------
-
     public RequestTracker() {
         this.clientId       = new Random().nextInt(100_000);   // 0 – 99999
         this.requestCounter = 0;
         System.out.println("[RequestTracker] Client started with clientId = " + clientId);
     }
-
-    // -----------------------------------------------------------------------
-    // Public API
-    // -----------------------------------------------------------------------
 
     /**
      * Call this once before sending each new request.
@@ -69,9 +56,6 @@ public class RequestTracker {
 
     /**
      * Builds the canonical string key used by the server's history map.
-     *
-     * @param cId  clientId
-     * @param rId  requestId
      * @return     key string, e.g. "47832-3"
      */
     public static String buildKey(int cId, int rId) {
