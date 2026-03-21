@@ -1,0 +1,294 @@
+import java.io.IOException;
+import java.net.*;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+
+/**
+ * editted MonitorManager 
+ *
+ * Server-side component that manages the callback / monitoring service
+ * described in the lab manual (Service 4 — Monitor Updates).
+ *
+ * ─── Protocol overview ────────────────────────────────────────────────────
+ *
+ *  1. CLIENT sends a REGISTER_MONITOR request with an intervalSeconds value.
+ *  2. SERVER calls registerClient() to record the client's address, port,
+ *     and an expiry timestamp = now + intervalSeconds * 1000.
+ *  3. After every account-modifying operation (open / close / deposit /
+ *     withdraw / transfer), the SERVER calls notifyMonitors() with a
+ *     descriptive update string.
+ *  4. MonitorManager delivers the update to every non-expired registered
+ *     client, then purges any that have since expired.
+ *  5. CLIENT receives update packets during its monitoring window.
+ *     After expiry it should stop receiving (server stops sending to it).
+ *
+ * ─── Callback message format ──────────────────────────────────────────────
+ *
+ *   byte[0]   = OP_ACCOUNT_UPDATE (0x0A)
+ *   byte[1..] = UTF-8 string describing the update, e.g.:
+ *               "OPEN|acc=1001|name=Alice|currency=SGD|balance=500.00"
+ *               "DEPOSIT|acc=1001|amount=200.00|newBalance=700.00"
+ *               "WITHDRAW|acc=1001|amount=100.00|newBalance=600.00"
+ *               "TRANSFER|from=1001|to=1002|amount=50.00"
+ *               "CLOSE|acc=1001|name=Alice"
+ *
+ * ─── Week 3 callback test scenario ───────────────────────────────────────
+ *
+ *   Client 1 → register for 30 s
+ *   Client 2 → open account, deposit, withdraw
+ *   Expected: Client 1 receives update messages for each operation.
+ *   After 30 s: Client 1 should stop receiving (server removes expired entry).
+ *
+ * Depends on: LossSimulator (for sendWithPossibleLoss on reply side).
+ */
+public class MonitorManager {
+
+    // ─── Inner class ─────────────────────────────────────────────────────────
+
+    /**
+     * Holds registration info for one monitoring client.
+     */
+    private static class MonitorEntry {
+        final InetAddress address;
+        final int         port;
+        final long        expiryTimeMs;
+
+        MonitorEntry(InetAddress address, int port, long expiryTimeMs) {
+            this.address      = address;
+            this.port         = port;
+            this.expiryTimeMs = expiryTimeMs;
+        }
+
+        boolean isExpired() {
+            return System.currentTimeMillis() > expiryTimeMs;
+        }
+
+        long remainingSeconds() {
+            return Math.max(0, (expiryTimeMs - System.currentTimeMillis()) / 1000);
+        }
+
+        @Override
+        public String toString() {
+            return address.getHostAddress() + ":" + port
+                    + " (expires in ~" + remainingSeconds() + "s)";
+        }
+    }
+
+    // ─── Constants ───────────────────────────────────────────────────────────
+
+    /** Operation code placed in byte[0] of every callback message. */
+    public static final byte OP_ACCOUNT_UPDATE = 0x0A;
+
+    // ─── Fields ──────────────────────────────────────────────────────────────
+
+    private final DatagramSocket     socket;
+    private final LossSimulator      lossSimulator;
+    private final List<MonitorEntry> entries = new ArrayList<>();
+
+    // ─── Constructor ─────────────────────────────────────────────────────────
+
+    /**
+     * @param socket        The server's existing DatagramSocket (shared for callbacks).
+     * @param lossSimulator Server-side LossSimulator (REPLY loss) used for sends.
+     */
+    public MonitorManager(DatagramSocket socket, LossSimulator lossSimulator) {
+        this.socket        = socket;
+        this.lossSimulator = lossSimulator;
+        System.out.println("[MonitorManager] Initialised.");
+    }
+
+    // ─── Public API ──────────────────────────────────────────────────────────
+
+    /**
+     * Registers a new monitoring client.
+     *
+     * Called by the server when it receives a REGISTER_MONITOR request.
+     *
+     * @param address         Client IP address (from received packet).
+     * @param port            Client UDP port (from received packet).
+     * @param intervalSeconds How long (seconds) the client wants to monitor.
+     */
+    public void registerClient(InetAddress address, int port, int intervalSeconds) {
+        long expiry = System.currentTimeMillis() + (long) intervalSeconds * 1000L;
+        MonitorEntry entry = new MonitorEntry(address, port, expiry);
+        entries.add(entry);
+        System.out.println("[MonitorManager] Registered monitor client: " + entry
+                + "  | Total registered: " + entries.size());
+    }
+
+    /**
+     * Sends an account-update callback to all non-expired monitoring clients.
+     *
+     * Call this from the server after EVERY account-modifying operation:
+     *   open, close, deposit, withdraw, transfer.
+     *
+     * Expired clients are automatically removed before sending.
+     *
+     * @param updateDescription  Human-readable update string (see class-level javadoc).
+     */
+    public void notifyMonitors(String updateDescription) {
+        purgeExpired();
+
+        if (entries.isEmpty()) {
+            // No active monitors — skip silently
+            return;
+        }
+
+        byte[] updateBytes = buildUpdateMessage(updateDescription);
+        System.out.println("[MonitorManager] Notifying " + entries.size()
+                + " monitor client(s): " + updateDescription);
+
+        Iterator<MonitorEntry> it = entries.iterator();
+        while (it.hasNext()) {
+            MonitorEntry entry = it.next();
+            if (entry.isExpired()) {
+                System.out.println("[MonitorManager] Skipping expired client: " + entry);
+                it.remove();
+                continue;
+            }
+            try {
+                DatagramPacket pkt = new DatagramPacket(
+                        updateBytes, updateBytes.length, entry.address, entry.port);
+                lossSimulator.send(pkt, "CALLBACK");
+                System.out.println("[MonitorManager] Update sent to " + entry);
+            } catch (IOException e) {
+                System.err.println("[MonitorManager] Failed to notify " + entry
+                        + ": " + e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Convenience overload — accepts pre-built bytes directly.
+     * Useful when the server already has a marshalled update message.
+     *
+     * @param updateBytes raw bytes (must follow the OP_ACCOUNT_UPDATE format)
+     */
+    public void notifyMonitors(byte[] updateBytes) {
+        purgeExpired();
+        if (entries.isEmpty()) return;
+
+        System.out.println("[MonitorManager] Notifying " + entries.size()
+                + " client(s) with raw update bytes (len=" + updateBytes.length + ")");
+
+        for (MonitorEntry entry : entries) {
+            try {
+                DatagramPacket pkt = new DatagramPacket(
+                        updateBytes, updateBytes.length, entry.address, entry.port);
+                lossSimulator.send(pkt, "CALLBACK");
+            } catch (IOException e) {
+                System.err.println("[MonitorManager] Send failed to " + entry
+                        + ": " + e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Removes all expired monitor registrations from the list.
+     * Called automatically inside notifyMonitors().
+     * Also safe to call manually between operations.
+     */
+    public void purgeExpired() {
+        int before = entries.size();
+        entries.removeIf(MonitorEntry::isExpired);
+        int removed = before - entries.size();
+        if (removed > 0) {
+            System.out.println("[MonitorManager] Purged " + removed
+                    + " expired monitor(s).  Active: " + entries.size());
+        }
+    }
+
+    /**
+     * Returns the count of currently active (non-expired) registrations.
+     */
+    public int activeCount() {
+        purgeExpired();
+        return entries.size();
+    }
+
+    // ─── Message helpers ─────────────────────────────────────────────────────
+
+    /**
+     * Builds the raw callback byte array:
+     *   byte[0]   = OP_ACCOUNT_UPDATE
+     *   byte[1..] = UTF-8 updateDescription
+     */
+    public static byte[] buildUpdateMessage(String updateDescription) {
+        byte[] text = updateDescription.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] msg  = new byte[1 + text.length];
+        msg[0]      = OP_ACCOUNT_UPDATE;
+        System.arraycopy(text, 0, msg, 1, text.length);
+        return msg;
+    }
+
+    /**
+     * Parses a received callback packet back into its description string.
+     * Used on the CLIENT side when a monitoring packet arrives.
+     *
+     * @param data    raw packet bytes
+     * @param length  number of valid bytes
+     * @return        the update description string, or null if format is invalid
+     */
+    public static String parseUpdateMessage(byte[] data, int length) {
+        if (length < 2 || data[0] != OP_ACCOUNT_UPDATE) return null;
+        return new String(data, 1, length - 1, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    // ─── Client-side helper: receive callbacks during monitoring window ───────
+
+    /**
+     * Blocks on the client side for intervalSeconds, printing all incoming
+     * account-update callbacks.  Called after sending a REGISTER_MONITOR request.
+     *
+     * @param clientSocket    the client's DatagramSocket
+     * @param intervalSeconds monitoring duration (matches the value sent to server)
+     */
+    public static void receiveCallbacks(DatagramSocket clientSocket, int intervalSeconds) {
+        long endTime = System.currentTimeMillis() + (long) intervalSeconds * 1000L;
+        System.out.println("[MonitorManager-Client] Monitoring for "
+                + intervalSeconds + "s. Waiting for callbacks…");
+        try {
+            clientSocket.setSoTimeout(1000);   // poll so we can check time
+            byte[] buf = new byte[4096];
+
+            while (System.currentTimeMillis() < endTime) {
+                DatagramPacket pkt = new DatagramPacket(buf, buf.length);
+                try {
+                    clientSocket.receive(pkt);
+                    String update = parseUpdateMessage(pkt.getData(), pkt.getLength());
+                    if (update != null) {
+                        System.out.println("[CALLBACK] Account update received: " + update);
+                    }
+                } catch (SocketTimeoutException ignored) {
+                    // Normal — loop again to re-check time
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("[MonitorManager-Client] Error: " + e.getMessage());
+        }
+        System.out.println("[MonitorManager-Client] Monitoring interval expired.");
+    }
+
+    // ─── Quick self-test ─────────────────────────────────────────────────────
+    public static void main(String[] args) throws Exception {
+        DatagramSocket testSocket = new DatagramSocket(2224);
+        LossSimulator  noLoss    = new LossSimulator(testSocket, 0.0, 0.0);
+        MonitorManager mgr       = new MonitorManager(testSocket, noLoss);
+
+        // Register two clients with different intervals
+        mgr.registerClient(InetAddress.getByName("127.0.0.1"), 9001, 5);
+        mgr.registerClient(InetAddress.getByName("127.0.0.1"), 9002, 2);
+        System.out.println("Active: " + mgr.activeCount());   // 2
+
+        // Simulate account update
+        mgr.notifyMonitors("DEPOSIT|acc=1001|amount=200.00|newBalance=700.00");
+
+        // Wait for second client to expire
+        Thread.sleep(3000);
+        mgr.purgeExpired();
+        System.out.println("Active after 3s: " + mgr.activeCount());  // 1
+
+        testSocket.close();
+    }
+}
