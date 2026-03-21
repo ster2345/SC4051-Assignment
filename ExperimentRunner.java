@@ -1,8 +1,8 @@
 import java.net.*;
 
 /**
- * ExperimentRunner — Week 3
- *
+ * ExperimentRunner 
+ * Have to compare with other 2 members code first to run
  * Orchestrates the three required experiments described in the lab spec.
  * Run this class to produce the console logs needed as screenshots for the report.
  *
