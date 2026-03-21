@@ -3,7 +3,7 @@ import java.net.*;
 import java.util.Random;
 
 /**
- * RetryClientLogic — Week 3
+ * RetryClientLogic 
  *
  * Implements the client-side retry loop for both invocation semantics:
  *
