@@ -4,7 +4,7 @@ import java.net.DatagramSocket;
 import java.util.Random;
 
 /**
- * LossSimulator — Week 3
+ * LossSimulator 
  *
  * Wraps DatagramSocket.send() to probabilistically drop outgoing packets,
  * simulating an unreliable UDP network.
