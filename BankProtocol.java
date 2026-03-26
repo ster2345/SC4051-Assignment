@@ -8,6 +8,7 @@ import java.util.Arrays;
  *   int    : 4 bytes, big-endian
  *   float  : Float.floatToIntBits(), then big-endian int
  *   String : int length (bytes), then UTF-8 bytes
+ *   Password: fixed-length UTF-8 field (PASSWORD_FIXED_BYTES), zero-padded
  *   Currency: 1 byte (enum ordinal: SGD=0, USD=1, EUR=2, GBP=3, JPY=4)
  */
 public final class BankProtocol {
@@ -28,6 +29,16 @@ public final class BankProtocol {
 
     public static final byte STATUS_SUCCESS = 0;
     public static final byte STATUS_ERROR   = 1;
+
+    /**
+     * Fixed byte-length for password field on the wire.
+     *
+     * Assignment wording says password is fixed-length string.
+     * We implement this as fixed 16-byte UTF-8 field:
+     * - shorter passwords are zero-padded
+     * - longer passwords are rejected during marshalling
+     */
+    public static final int PASSWORD_FIXED_BYTES = 16;
 
     // ── Invocation semantics ─────────────────────────────────────────────────
 
@@ -76,7 +87,7 @@ public final class BankProtocol {
         ByteWriter w = new ByteWriter();
         w.putByte(OP_OPEN_ACCOUNT);
         w.putString(name);
-        w.putString(password);
+        w.putFixedPassword(password);
         w.putCurrency(currency);            
         w.putFloat(initialBalance);
         return w.toByteArray();
@@ -87,7 +98,7 @@ public final class BankProtocol {
         w.putByte(OP_CLOSE_ACCOUNT);
         w.putString(name);
         w.putInt(accountNo);
-        w.putString(password);
+        w.putFixedPassword(password);
         return w.toByteArray();
     }
 
@@ -97,7 +108,7 @@ public final class BankProtocol {
         w.putByte(OP_DEPOSIT);
         w.putString(name);
         w.putInt(accountNo);
-        w.putString(password);
+        w.putFixedPassword(password);
         w.putCurrency(currency);
         w.putFloat(amount);
         return w.toByteArray();
@@ -109,7 +120,7 @@ public final class BankProtocol {
         w.putByte(OP_WITHDRAW);
         w.putString(name);
         w.putInt(accountNo);
-        w.putString(password);
+        w.putFixedPassword(password);
         w.putCurrency(currency);
         w.putFloat(amount);
         return w.toByteArray();
@@ -127,7 +138,7 @@ public final class BankProtocol {
         w.putByte(OP_CHECK_BALANCE);
         w.putString(name);
         w.putInt(accountNo);
-        w.putString(password);
+        w.putFixedPassword(password);
         return w.toByteArray();
     }
 
@@ -138,7 +149,7 @@ public final class BankProtocol {
         w.putByte(OP_TRANSFER_MONEY);
         w.putString(senderName);
         w.putInt(senderAccountNo);
-        w.putString(password);
+        w.putFixedPassword(password);
         w.putInt(recipientAccountNo);
         w.putFloat(amount);
         return w.toByteArray();
@@ -154,26 +165,26 @@ public final class BankProtocol {
         switch (req.opCode) {
             case OP_OPEN_ACCOUNT:
                 req.name           = r.readString();
-                req.password       = r.readString();
+                req.password       = r.readFixedPassword();
                 req.currency       = r.readCurrency();   
                 req.initialBalance = r.readFloat();
                 break;
             case OP_CLOSE_ACCOUNT:
                 req.name      = r.readString();
                 req.accountNo = r.readInt();
-                req.password  = r.readString();
+                req.password  = r.readFixedPassword();
                 break;
             case OP_DEPOSIT:
                 req.name      = r.readString();
                 req.accountNo = r.readInt();
-                req.password  = r.readString();
+                req.password  = r.readFixedPassword();
                 req.currency  = r.readCurrency();
                 req.amount    = r.readFloat();
                 break;
             case OP_WITHDRAW:
                 req.name      = r.readString();
                 req.accountNo = r.readInt();
-                req.password  = r.readString();
+                req.password  = r.readFixedPassword();
                 req.currency  = r.readCurrency();
                 req.amount    = r.readFloat();
                 break;
@@ -183,12 +194,12 @@ public final class BankProtocol {
             case OP_CHECK_BALANCE:
                 req.name      = r.readString();
                 req.accountNo = r.readInt();
-                req.password  = r.readString();
+                req.password  = r.readFixedPassword();
                 break;
             case OP_TRANSFER_MONEY:
                 req.name               = r.readString();
                 req.accountNo          = r.readInt();
-                req.password           = r.readString();
+                req.password           = r.readFixedPassword();
                 req.recipientAccountNo = r.readInt();
                 req.amount             = r.readFloat();
                 break;
@@ -253,6 +264,26 @@ public final class BankProtocol {
             pos += bytes.length;
         }
 
+        /**
+         * Writes password as fixed-size byte field (zero-padded).
+         */
+        void putFixedPassword(String password) {
+            byte[] bytes = (password == null ? "" : password).getBytes(StandardCharsets.UTF_8);
+            if (bytes.length > PASSWORD_FIXED_BYTES) {
+                throw new IllegalArgumentException(
+                        "Password too long for fixed field (max "
+                                + PASSWORD_FIXED_BYTES + " bytes, got " + bytes.length + ")");
+            }
+
+            ensureCapacity(PASSWORD_FIXED_BYTES);
+
+            System.arraycopy(bytes, 0, data, pos, bytes.length);
+            for (int i = bytes.length; i < PASSWORD_FIXED_BYTES; i++) {
+                data[pos + i] = 0;
+            }
+            pos += PASSWORD_FIXED_BYTES;
+        }
+
         void putCurrency(Currency currency) {
             ensureCapacity(1);
             data[pos++] = (byte) currency.ordinal();
@@ -303,6 +334,30 @@ public final class BankProtocol {
             String s = new String(data, pos, len, StandardCharsets.UTF_8);
             pos += len;
             return s;
+        }
+
+        /**
+         * Reads fixed-size password field and trims trailing zero padding bytes.
+         */
+        String readFixedPassword() {
+            require(PASSWORD_FIXED_BYTES);
+
+            int start = pos;
+            int end = start + PASSWORD_FIXED_BYTES;
+
+            int effectiveEnd = end;
+            while (effectiveEnd > start && data[effectiveEnd - 1] == 0) {
+                effectiveEnd--;
+            }
+
+            String password = new String(
+                    data,
+                    start,
+                    effectiveEnd - start,
+                    StandardCharsets.UTF_8);
+
+            pos = end;
+            return password;
         }
 
         Currency readCurrency() {
