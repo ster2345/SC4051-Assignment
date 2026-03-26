@@ -2,427 +2,325 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 /**
- * BankProtocol
- *
- * Central place for request/reply message definitions and marshalling helpers.
- *
- * Why this class exists:
- * - The assignment requires ALL client/server data to be sent as raw bytes.
- * - Different operations have different parameters, so we need a protocol.
- * - We avoid Java serialization / stream-based object I/O entirely.
- *
- * Wire-format overview:
- *
- * Request payload (inside Retry header):
- *   byte opCode
- *   ... operation-specific fields ...
- *
- * Reply payload (inside Retry header):
- *   byte statusCode      (0 = success, 1 = error)
- *   int  messageLength
- *   byte[] messageUtf8
+ * BankProtocol — wire format definitions and marshalling helpers.
  *
  * Primitive encoding rules:
- * - int   : 4 bytes, big-endian
- * - float : encoded via Float.floatToIntBits(), then big-endian int
- * - String: int length (bytes), then UTF-8 bytes
- *
- * IMPORTANT:
- * - This class only handles payload bytes (the part after the 8-byte
- *   clientId/requestId header). The outer header is handled by
- *   RetryClientLogic.wrapWithHeader()/stripHeader().
+ *   int    : 4 bytes, big-endian
+ *   float  : Float.floatToIntBits(), then big-endian int
+ *   String : int length (bytes), then UTF-8 bytes
+ *   Currency: 1 byte (enum ordinal: SGD=0, USD=1, EUR=2, GBP=3, JPY=4)
  */
 public final class BankProtocol {
 
-    private BankProtocol() {
-        // Utility class; no instances.
-    }
+    private BankProtocol() {}
 
-    // ---------------------------------------------------------------------
-    // Operation codes (request opCode values)
-    // ---------------------------------------------------------------------
+    // ── Operation codes ──────────────────────────────────────────────────────
 
-    public static final byte OP_OPEN_ACCOUNT      = 1;
-    public static final byte OP_CLOSE_ACCOUNT     = 2;
-    public static final byte OP_DEPOSIT           = 3;
-    public static final byte OP_WITHDRAW          = 4;
-    public static final byte OP_REGISTER_MONITOR  = 5;
-    public static final byte OP_CHECK_BALANCE     = 6; // idempotent
-    public static final byte OP_TRANSFER_MONEY    = 7; // non-idempotent
+    public static final byte OP_OPEN_ACCOUNT     = 1;
+    public static final byte OP_CLOSE_ACCOUNT    = 2;
+    public static final byte OP_DEPOSIT          = 3;
+    public static final byte OP_WITHDRAW         = 4;
+    public static final byte OP_REGISTER_MONITOR = 5;
+    public static final byte OP_CHECK_BALANCE    = 6;   // idempotent
+    public static final byte OP_TRANSFER_MONEY   = 7;   // non-idempotent
 
-    // ---------------------------------------------------------------------
-    // Reply status codes
-    // ---------------------------------------------------------------------
+    // ── Reply status codes ───────────────────────────────────────────────────
 
     public static final byte STATUS_SUCCESS = 0;
     public static final byte STATUS_ERROR   = 1;
 
-    // ---------------------------------------------------------------------
-    // Invocation semantics options (for startup args)
-    // ---------------------------------------------------------------------
+    // ── Invocation semantics ─────────────────────────────────────────────────
 
     public enum InvocationSemantics {
         AT_LEAST_ONCE,
         AT_MOST_ONCE;
 
-        /**
-         * Parses flexible user input from command-line / menu text.
-         */
         public static InvocationSemantics fromString(String raw) {
-            if (raw == null) {
-                throw new IllegalArgumentException("Semantics cannot be null.");
+            if (raw == null) throw new IllegalArgumentException("Semantics cannot be null.");
+            switch (raw.trim().toLowerCase()) {
+                case "at-least-once": case "alo": case "atleastonce": return AT_LEAST_ONCE;
+                case "at-most-once":  case "amo": case "atmostonce":  return AT_MOST_ONCE;
+                default: throw new IllegalArgumentException(
+                        "Unknown semantics: " + raw + " (use at-least-once or at-most-once)");
             }
-            String s = raw.trim().toLowerCase();
-            if (s.equals("at-least-once") || s.equals("alo") || s.equals("atleastonce")) {
-                return AT_LEAST_ONCE;
-            }
-            if (s.equals("at-most-once") || s.equals("amo") || s.equals("atmostonce")) {
-                return AT_MOST_ONCE;
-            }
-            throw new IllegalArgumentException(
-                    "Unknown semantics: " + raw + " (use at-least-once or at-most-once)");
         }
     }
 
-    // ---------------------------------------------------------------------
-    // Decoded request / reply models
-    // ---------------------------------------------------------------------
+    // ── Decoded request model ────────────────────────────────────────────────
 
     /**
-     * Generic decoded request model.
-     *
-     * We use one class for all operations to keep server dispatch simple.
-     * Only the relevant fields are populated depending on opCode.
+     * Generic decoded request. Only the fields relevant to the opCode are populated.
+     * currency is now a Currency enum (was String).
      */
     public static class Request {
-        public byte opCode;
-
-        public String name;
-        public String password;
-        public String currency;
-
-        public int accountNo;
-        public int recipientAccountNo;
-
-        public float amount;
-        public float initialBalance;
-
-        public int monitorIntervalSeconds;
+        public byte     opCode;
+        public String   name;
+        public String   password;
+        public Currency currency;           
+        public int      accountNo;
+        public int      recipientAccountNo;
+        public float    amount;
+        public float    initialBalance;
+        public int      monitorIntervalSeconds;
     }
 
-    /**
-     * Decoded reply model.
-     */
     public static class Reply {
         public boolean success;
-        public String message;
+        public String  message;
     }
 
-    // ---------------------------------------------------------------------
-    // Request marshalling helpers
-    // ---------------------------------------------------------------------
+    // ── Request marshalling ──────────────────────────────────────────────────
 
     public static byte[] marshalOpenAccountRequest(
-            String name, String password, String currency, float initialBalance) {
-        ByteWriter writer = new ByteWriter();
-        writer.putByte(OP_OPEN_ACCOUNT);
-        writer.putString(name);
-        writer.putString(password);
-        writer.putString(currency);
-        writer.putFloat(initialBalance);
-        return writer.toByteArray();
+            String name, String password, Currency currency, float initialBalance) {
+        ByteWriter w = new ByteWriter();
+        w.putByte(OP_OPEN_ACCOUNT);
+        w.putString(name);
+        w.putString(password);
+        w.putCurrency(currency);            
+        w.putFloat(initialBalance);
+        return w.toByteArray();
     }
 
     public static byte[] marshalCloseAccountRequest(String name, int accountNo, String password) {
-        ByteWriter writer = new ByteWriter();
-        writer.putByte(OP_CLOSE_ACCOUNT);
-        writer.putString(name);
-        writer.putInt(accountNo);
-        writer.putString(password);
-        return writer.toByteArray();
+        ByteWriter w = new ByteWriter();
+        w.putByte(OP_CLOSE_ACCOUNT);
+        w.putString(name);
+        w.putInt(accountNo);
+        w.putString(password);
+        return w.toByteArray();
     }
 
     public static byte[] marshalDepositRequest(
-            String name, int accountNo, String password, String currency, float amount) {
-        ByteWriter writer = new ByteWriter();
-        writer.putByte(OP_DEPOSIT);
-        writer.putString(name);
-        writer.putInt(accountNo);
-        writer.putString(password);
-        writer.putString(currency);
-        writer.putFloat(amount);
-        return writer.toByteArray();
+            String name, int accountNo, String password, Currency currency, float amount) {
+        ByteWriter w = new ByteWriter();
+        w.putByte(OP_DEPOSIT);
+        w.putString(name);
+        w.putInt(accountNo);
+        w.putString(password);
+        w.putCurrency(currency);
+        w.putFloat(amount);
+        return w.toByteArray();
     }
 
     public static byte[] marshalWithdrawRequest(
-            String name, int accountNo, String password, String currency, float amount) {
-        ByteWriter writer = new ByteWriter();
-        writer.putByte(OP_WITHDRAW);
-        writer.putString(name);
-        writer.putInt(accountNo);
-        writer.putString(password);
-        writer.putString(currency);
-        writer.putFloat(amount);
-        return writer.toByteArray();
+            String name, int accountNo, String password, Currency currency, float amount) {
+        ByteWriter w = new ByteWriter();
+        w.putByte(OP_WITHDRAW);
+        w.putString(name);
+        w.putInt(accountNo);
+        w.putString(password);
+        w.putCurrency(currency);
+        w.putFloat(amount);
+        return w.toByteArray();
     }
 
     public static byte[] marshalRegisterMonitorRequest(int intervalSeconds) {
-        ByteWriter writer = new ByteWriter();
-        writer.putByte(OP_REGISTER_MONITOR);
-        writer.putInt(intervalSeconds);
-        return writer.toByteArray();
+        ByteWriter w = new ByteWriter();
+        w.putByte(OP_REGISTER_MONITOR);
+        w.putInt(intervalSeconds);
+        return w.toByteArray();
     }
 
     public static byte[] marshalCheckBalanceRequest(String name, int accountNo, String password) {
-        ByteWriter writer = new ByteWriter();
-        writer.putByte(OP_CHECK_BALANCE);
-        writer.putString(name);
-        writer.putInt(accountNo);
-        writer.putString(password);
-        return writer.toByteArray();
+        ByteWriter w = new ByteWriter();
+        w.putByte(OP_CHECK_BALANCE);
+        w.putString(name);
+        w.putInt(accountNo);
+        w.putString(password);
+        return w.toByteArray();
     }
 
     public static byte[] marshalTransferMoneyRequest(
-            String senderName,
-            int senderAccountNo,
-            String password,
-            int recipientAccountNo,
-            float amount) {
-        ByteWriter writer = new ByteWriter();
-        writer.putByte(OP_TRANSFER_MONEY);
-        writer.putString(senderName);
-        writer.putInt(senderAccountNo);
-        writer.putString(password);
-        writer.putInt(recipientAccountNo);
-        writer.putFloat(amount);
-        return writer.toByteArray();
+            String senderName, int senderAccountNo, String password,
+            int recipientAccountNo, float amount) {
+        ByteWriter w = new ByteWriter();
+        w.putByte(OP_TRANSFER_MONEY);
+        w.putString(senderName);
+        w.putInt(senderAccountNo);
+        w.putString(password);
+        w.putInt(recipientAccountNo);
+        w.putFloat(amount);
+        return w.toByteArray();
     }
 
-    // ---------------------------------------------------------------------
-    // Request unmarshalling (server-side)
-    // ---------------------------------------------------------------------
+    // ── Request unmarshalling (server-side) ───────────────────────────────────
 
-    /**
-     * Decodes one request payload (after the 8-byte Retry header).
-     *
-     * @throws IllegalArgumentException if payload is malformed.
-     */
     public static Request unmarshalRequest(byte[] payload, int length) {
-        ByteReader reader = new ByteReader(payload, length);
-        Request req = new Request();
-
-        req.opCode = reader.readByte();
+        ByteReader r = new ByteReader(payload, length);
+        Request req  = new Request();
+        req.opCode   = r.readByte();
 
         switch (req.opCode) {
             case OP_OPEN_ACCOUNT:
-                req.name = reader.readString();
-                req.password = reader.readString();
-                req.currency = reader.readString();
-                req.initialBalance = reader.readFloat();
+                req.name           = r.readString();
+                req.password       = r.readString();
+                req.currency       = r.readCurrency();   
+                req.initialBalance = r.readFloat();
                 break;
-
             case OP_CLOSE_ACCOUNT:
-                req.name = reader.readString();
-                req.accountNo = reader.readInt();
-                req.password = reader.readString();
+                req.name      = r.readString();
+                req.accountNo = r.readInt();
+                req.password  = r.readString();
                 break;
-
             case OP_DEPOSIT:
-                req.name = reader.readString();
-                req.accountNo = reader.readInt();
-                req.password = reader.readString();
-                req.currency = reader.readString();
-                req.amount = reader.readFloat();
+                req.name      = r.readString();
+                req.accountNo = r.readInt();
+                req.password  = r.readString();
+                req.currency  = r.readCurrency();
+                req.amount    = r.readFloat();
                 break;
-
             case OP_WITHDRAW:
-                req.name = reader.readString();
-                req.accountNo = reader.readInt();
-                req.password = reader.readString();
-                req.currency = reader.readString();
-                req.amount = reader.readFloat();
+                req.name      = r.readString();
+                req.accountNo = r.readInt();
+                req.password  = r.readString();
+                req.currency  = r.readCurrency();
+                req.amount    = r.readFloat();
                 break;
-
             case OP_REGISTER_MONITOR:
-                req.monitorIntervalSeconds = reader.readInt();
+                req.monitorIntervalSeconds = r.readInt();
                 break;
-
             case OP_CHECK_BALANCE:
-                req.name = reader.readString();
-                req.accountNo = reader.readInt();
-                req.password = reader.readString();
+                req.name      = r.readString();
+                req.accountNo = r.readInt();
+                req.password  = r.readString();
                 break;
-
             case OP_TRANSFER_MONEY:
-                req.name = reader.readString();
-                req.accountNo = reader.readInt(); // sender account
-                req.password = reader.readString();
-                req.recipientAccountNo = reader.readInt();
-                req.amount = reader.readFloat();
+                req.name               = r.readString();
+                req.accountNo          = r.readInt();
+                req.password           = r.readString();
+                req.recipientAccountNo = r.readInt();
+                req.amount             = r.readFloat();
                 break;
-
             default:
                 throw new IllegalArgumentException("Unknown opCode: " + req.opCode);
         }
 
-        if (reader.hasRemaining()) {
+        if (r.hasRemaining()) {
             throw new IllegalArgumentException(
-                    "Malformed request: extra unread bytes remain (" + reader.remaining() + ")");
+                    "Malformed request: " + r.remaining() + " extra bytes remain");
         }
-
         return req;
     }
 
-    // ---------------------------------------------------------------------
-    // Reply marshalling/unmarshalling
-    // ---------------------------------------------------------------------
+    // ── Reply marshalling/unmarshalling ───────────────────────────────────────
 
     public static byte[] marshalReply(boolean success, String message) {
-        ByteWriter writer = new ByteWriter();
-        writer.putByte(success ? STATUS_SUCCESS : STATUS_ERROR);
-        writer.putString(message == null ? "" : message);
-        return writer.toByteArray();
+        ByteWriter w = new ByteWriter();
+        w.putByte(success ? STATUS_SUCCESS : STATUS_ERROR);
+        w.putString(message == null ? "" : message);
+        return w.toByteArray();
     }
 
     public static Reply unmarshalReply(byte[] payload, int length) {
-        ByteReader reader = new ByteReader(payload, length);
-        Reply reply = new Reply();
-        byte status = reader.readByte();
-        reply.success = (status == STATUS_SUCCESS);
-        reply.message = reader.readString();
-
-        if (reader.hasRemaining()) {
+        ByteReader r  = new ByteReader(payload, length);
+        Reply reply   = new Reply();
+        reply.success = (r.readByte() == STATUS_SUCCESS);
+        reply.message = r.readString();
+        if (r.hasRemaining()) {
             throw new IllegalArgumentException(
-                    "Malformed reply: extra unread bytes remain (" + reader.remaining() + ")");
+                    "Malformed reply: " + r.remaining() + " extra bytes remain");
         }
-
         return reply;
     }
 
-    // ---------------------------------------------------------------------
-    // Internal low-level byte writer
-    // ---------------------------------------------------------------------
+    // ── ByteWriter ────────────────────────────────────────────────────────────
 
-    /**
-     * Small growable byte buffer with explicit putX methods.
-     *
-     * We intentionally avoid DataOutputStream / ObjectOutputStream.
-     */
     private static class ByteWriter {
         private byte[] data = new byte[64];
-        private int position = 0;
+        private int    pos  = 0;
 
         void putByte(byte value) {
             ensureCapacity(1);
-            data[position++] = value;
+            data[pos++] = value;
         }
 
         void putInt(int value) {
             ensureCapacity(4);
-            data[position++] = (byte) ((value >>> 24) & 0xFF);
-            data[position++] = (byte) ((value >>> 16) & 0xFF);
-            data[position++] = (byte) ((value >>> 8) & 0xFF);
-            data[position++] = (byte) (value & 0xFF);
+            data[pos++] = (byte) ((value >>> 24) & 0xFF);
+            data[pos++] = (byte) ((value >>> 16) & 0xFF);
+            data[pos++] = (byte) ((value >>>  8) & 0xFF);
+            data[pos++] = (byte)  (value         & 0xFF);
         }
 
-        void putFloat(float value) {
-            putInt(Float.floatToIntBits(value));
-        }
+        void putFloat(float value) { putInt(Float.floatToIntBits(value)); }
 
         void putString(String text) {
-            String safe = (text == null) ? "" : text;
-            byte[] bytes = safe.getBytes(StandardCharsets.UTF_8);
+            byte[] bytes = (text == null ? "" : text).getBytes(StandardCharsets.UTF_8);
             putInt(bytes.length);
             ensureCapacity(bytes.length);
-            System.arraycopy(bytes, 0, data, position, bytes.length);
-            position += bytes.length;
+            System.arraycopy(bytes, 0, data, pos, bytes.length);
+            pos += bytes.length;
         }
 
-        byte[] toByteArray() {
-            return Arrays.copyOf(data, position);
+        void putCurrency(Currency currency) {
+            ensureCapacity(1);
+            data[pos++] = (byte) currency.ordinal();
         }
 
-        private void ensureCapacity(int additional) {
-            int needed = position + additional;
-            if (needed <= data.length) {
-                return;
-            }
+        byte[] toByteArray() { return Arrays.copyOf(data, pos); }
+
+        private void ensureCapacity(int extra) {
+            int needed = pos + extra;
+            if (needed <= data.length) return;
             int newSize = data.length;
-            while (newSize < needed) {
-                newSize *= 2;
-            }
+            while (newSize < needed) newSize *= 2;
             data = Arrays.copyOf(data, newSize);
         }
     }
 
-    // ---------------------------------------------------------------------
-    // Internal low-level byte reader
-    // ---------------------------------------------------------------------
+    // ── ByteReader ────────────────────────────────────────────────────────────
 
-    /**
-     * Strict reader that throws IllegalArgumentException on malformed payloads.
-     */
     private static class ByteReader {
         private final byte[] data;
-        private final int limit;
-        private int position;
+        private final int    limit;
+        private       int    pos;
 
         ByteReader(byte[] source, int length) {
-            if (source == null) {
-                throw new IllegalArgumentException("source cannot be null");
-            }
-            if (length < 0 || length > source.length) {
-                throw new IllegalArgumentException("Invalid length: " + length);
-            }
-            this.data = source;
+            if (source == null)                        throw new IllegalArgumentException("source null");
+            if (length < 0 || length > source.length) throw new IllegalArgumentException("bad length");
+            this.data  = source;
             this.limit = length;
-            this.position = 0;
+            this.pos   = 0;
         }
 
-        byte readByte() {
-            require(1);
-            return data[position++];
-        }
+        byte readByte() { require(1); return data[pos++]; }
 
         int readInt() {
             require(4);
-            int value = ((data[position] & 0xFF) << 24)
-                    | ((data[position + 1] & 0xFF) << 16)
-                    | ((data[position + 2] & 0xFF) << 8)
-                    | (data[position + 3] & 0xFF);
-            position += 4;
-            return value;
+            int v = ((data[pos] & 0xFF) << 24) | ((data[pos+1] & 0xFF) << 16)
+                  | ((data[pos+2] & 0xFF) << 8) |  (data[pos+3] & 0xFF);
+            pos += 4;
+            return v;
         }
 
-        float readFloat() {
-            return Float.intBitsToFloat(readInt());
-        }
+        float readFloat() { return Float.intBitsToFloat(readInt()); }
 
         String readString() {
-            int length = readInt();
-            if (length < 0) {
-                throw new IllegalArgumentException("Negative string length: " + length);
+            int len = readInt();
+            if (len < 0) throw new IllegalArgumentException("Negative string length: " + len);
+            require(len);
+            String s = new String(data, pos, len, StandardCharsets.UTF_8);
+            pos += len;
+            return s;
+        }
+
+        Currency readCurrency() {
+            byte ordinal = readByte();
+            Currency[] values = Currency.values();
+            if (ordinal < 0 || ordinal >= values.length) {
+                throw new IllegalArgumentException("Unknown currency ordinal: " + ordinal);
             }
-            require(length);
-            String text = new String(data, position, length, StandardCharsets.UTF_8);
-            position += length;
-            return text;
+            return values[ordinal];
         }
 
-        boolean hasRemaining() {
-            return position < limit;
-        }
-
-        int remaining() {
-            return limit - position;
-        }
+        boolean hasRemaining() { return pos < limit; }
+        int     remaining()    { return limit - pos; }
 
         private void require(int n) {
-            if (position + n > limit) {
-                throw new IllegalArgumentException(
-                        "Malformed payload: need " + n + " bytes but only "
-                                + (limit - position) + " available");
-            }
+            if (pos + n > limit) throw new IllegalArgumentException(
+                    "Need " + n + " bytes but only " + (limit - pos) + " available");
         }
     }
 }
+
