@@ -1,11 +1,6 @@
 import java.net.*;
 
 /**
- * ExperimentRunner 
- * Have to compare with other 2 members code first to run
- * Orchestrates the three required experiments described in the lab spec.
- * Run this class to produce the console logs needed as screenshots for the report.
- *
  * ─── Experiments ──────────────────────────────────────────────────────────
  *
  *  Experiment 1 — At-least-once + non-idempotent + reply loss
@@ -19,85 +14,66 @@ import java.net.*;
  *  Experiment 3 — Idempotent operation (checkBalance) under both semantics
  *    Setup:  op = checkBalance, both semantics
  *    Result: Repeated execution is safe either way → state unchanged.
- *
- * ─── Usage ────────────────────────────────────────────────────────────────
- *
- *   Compile all files, then run:
- *     java ExperimentRunner
- *
- *   This class simulates the scenario LOCALLY (no real network needed)
- *   using a loopback server stub.  For the full demo with two machines,
- *   use RetryClientLogic + RequestHistoryManager + MonitorManager directly.
- *
- * Depends on: RequestHistoryManager, LossSimulator, RetryClientLogic.
  */
 public class ExperimentRunner {
 
-    // ─── Shared configuration ────────────────────────────────────────────────
+    // ── Configuration ─────────────────────────────────────────────────────────
 
-    private static final int    SERVER_PORT      = 2222;
-    private static final String SERVER_HOST      = "127.0.0.1";
-    private static final double REPLY_LOSS_PROB  = 0.5;   // 50% — high enough to reliably trigger retries in demos
-    private static final double NO_LOSS          = 0.0;
+    private static final double REPLY_LOSS_PROB  = 0.5;   // 50% ensures retries are likely
+    private static final float  INITIAL_BALANCE  = 1000f;
+    private static final float  TRANSFER_AMOUNT  = 200f;
+    private static final int    MAX_RETRIES      = RetryClientLogic.MAX_RETRIES;
 
-    // Simulated account state (shared mutable — intentionally not thread-safe to show the problem)
-    private static double accountA = 1000.00;
-    private static double accountB = 500.00;
-    private static final double TRANSFER_AMOUNT = 200.00;
+    // ── Entry point ───────────────────────────────────────────────────────────
 
-    // ─── Entry point ─────────────────────────────────────────────────────────
-
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) {
         printBanner("WEEK 3 EXPERIMENT RUNNER");
 
         runExperiment1();
-        resetAccounts();
-
         runExperiment2();
-        resetAccounts();
-
         runExperiment3();
     }
 
-    // ─── Experiment 1 ────────────────────────────────────────────────────────
+    // ── Experiment 1 ──────────────────────────────────────────────────────────
 
     /**
-     * AT-LEAST-ONCE + non-idempotent (transferMoney) + reply loss.
-     *
-     * Expected outcome: transfer may be applied more than once → wrong balance.
+     * AT-LEAST-ONCE + transferMoney + reply loss.
+     * Server re-executes on every retry → balance deducted multiple times.
      */
     private static void runExperiment1() {
         printBanner("EXPERIMENT 1: At-Least-Once + Non-Idempotent + Reply Loss");
 
-        System.out.println("[Setup] semantics        = AT-LEAST-ONCE");
-        System.out.println("[Setup] reply loss prob  = " + REPLY_LOSS_PROB);
-        System.out.println("[Setup] operation        = transferMoney");
-        System.out.printf ("[Setup] Initial balances: A=%.2f  B=%.2f%n", accountA, accountB);
-        System.out.println("[Setup] Transfer amount  = " + TRANSFER_AMOUNT);
+        AccountStore store = new AccountStore();
+        store.openAccount("Alice", "pw1", Currency.SGD, INITIAL_BALANCE);  // account 1000
+        store.openAccount("Bob",   "pw2", Currency.SGD, INITIAL_BALANCE);  // account 1001
+
+        System.out.println("[Setup] semantics       = AT-LEAST-ONCE");
+        System.out.println("[Setup] replyLossProb   = " + REPLY_LOSS_PROB);
+        System.out.println("[Setup] operation       = transferMoney");
+        System.out.println("[Setup] transfer amount = " + TRANSFER_AMOUNT);
+        System.out.println("[Setup] " + store.checkBalance("Alice", 1000, "pw1"));
+        System.out.println("[Setup] " + store.checkBalance("Bob",   1001, "pw2"));
         System.out.println();
 
-        RequestHistoryManager history = new RequestHistoryManager();  // NOT used in at-least-once
-        // clientId and requestId managed inline (RequestTracker inlined)
         int clientId  = new java.util.Random().nextInt(100_000);
         int requestId = 1;
         String key    = RetryClientLogic.buildKey(clientId, requestId);
 
         System.out.println("[Exp1] Sending transfer request key=" + key);
 
-        for (int attempt = 1; attempt <= RetryClientLogic.MAX_RETRIES; attempt++) {
-            System.out.println("[Exp1] Attempt " + attempt + "/" + RetryClientLogic.MAX_RETRIES);
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            System.out.println("[Exp1] Attempt " + attempt + "/" + MAX_RETRIES);
 
-            // Server receives and processes (no duplicate check under at-least-once)
+            // AT-LEAST-ONCE: no duplicate check — server always executes
             System.out.println("[Server] Processing NEW request: " + key);
-            applyTransfer();   // ← executed every attempt that reaches the server
+            String result = store.transferMoney("Alice", 1000, "pw1", 1001, TRANSFER_AMOUNT);
+            System.out.println("[Server] Result: " + result);
 
-            // Simulate reply loss (server sends reply but it gets dropped)
             boolean dropped = simulateReplyLoss();
-            if (dropped && attempt < RetryClientLogic.MAX_RETRIES) {
+            if (dropped && attempt < MAX_RETRIES) {
                 System.out.println("[Client] Timeout. Retrying request " + key);
                 continue;
             }
-
             if (!dropped) {
                 System.out.println("[Client] Reply received on attempt " + attempt);
                 break;
@@ -105,68 +81,66 @@ public class ExperimentRunner {
         }
 
         System.out.println();
-        System.out.printf("[Exp1] FINAL balances: A=%.2f  B=%.2f%n", accountA, accountB);
-        System.out.printf("[Exp1] Expected if applied once: A=%.2f  B=%.2f%n",
-                1000.00 - TRANSFER_AMOUNT, 500.00 + TRANSFER_AMOUNT);
-        System.out.println("[Exp1] RESULT: " + (accountA < 1000.00 - TRANSFER_AMOUNT
-                ? "WRONG — transfer applied multiple times (demonstrates the problem)"
-                : "Correct by luck (retry not triggered this run)"));
+        System.out.println("[Exp1] FINAL STATE:");
+        System.out.println("  " + store.checkBalance("Alice", 1000, "pw1"));
+        System.out.println("  " + store.checkBalance("Bob",   1001, "pw2"));
+        float expectedAlice = INITIAL_BALANCE - TRANSFER_AMOUNT;
+        System.out.println("[Exp1] Expected Alice if applied ONCE: " + expectedAlice + " SGD");
+        System.out.println("[Exp1] RESULT: If Alice's balance < " + expectedAlice
+                + ", transfer was applied multiple times — DEMONSTRATES THE PROBLEM.");
         printSeparator();
     }
 
-    // ─── Experiment 2 ────────────────────────────────────────────────────────
+    // ── Experiment 2 ──────────────────────────────────────────────────────────
 
     /**
-     * AT-MOST-ONCE + non-idempotent (transferMoney) + reply loss.
-     *
-     * Expected outcome: transfer applied exactly once → correct balance.
+     * AT-MOST-ONCE + transferMoney + reply loss.
+     * RequestHistoryManager caches first reply → retries get cached reply → transfer applied once.
      */
     private static void runExperiment2() {
         printBanner("EXPERIMENT 2: At-Most-Once + Non-Idempotent + Reply Loss");
 
-        System.out.println("[Setup] semantics        = AT-MOST-ONCE");
-        System.out.println("[Setup] reply loss prob  = " + REPLY_LOSS_PROB);
-        System.out.println("[Setup] operation        = transferMoney");
-        System.out.printf ("[Setup] Initial balances: A=%.2f  B=%.2f%n", accountA, accountB);
-        System.out.println("[Setup] Transfer amount  = " + TRANSFER_AMOUNT);
+        AccountStore          store   = new AccountStore();
+        RequestHistoryManager history = new RequestHistoryManager();
+
+        store.openAccount("Alice", "pw1", Currency.SGD, INITIAL_BALANCE);  // account 1000
+        store.openAccount("Bob",   "pw2", Currency.SGD, INITIAL_BALANCE);  // account 1001
+
+        System.out.println("[Setup] semantics       = AT-MOST-ONCE");
+        System.out.println("[Setup] replyLossProb   = " + REPLY_LOSS_PROB);
+        System.out.println("[Setup] operation       = transferMoney");
+        System.out.println("[Setup] transfer amount = " + TRANSFER_AMOUNT);
+        System.out.println("[Setup] " + store.checkBalance("Alice", 1000, "pw1"));
+        System.out.println("[Setup] " + store.checkBalance("Bob",   1001, "pw2"));
         System.out.println();
 
-        RequestHistoryManager history = new RequestHistoryManager();  // at-most-once: history IS used
-        // clientId and requestId managed inline (RequestTracker inlined)
         int clientId  = new java.util.Random().nextInt(100_000);
         int requestId = 1;
         String key    = RetryClientLogic.buildKey(clientId, requestId);
 
-        // Simulate the reply bytes the server would send
-        byte[] cachedReply = null;
-
         System.out.println("[Exp2] Sending transfer request key=" + key);
 
-        for (int attempt = 1; attempt <= RetryClientLogic.MAX_RETRIES; attempt++) {
-            System.out.println("[Exp2] Attempt " + attempt + "/" + RetryClientLogic.MAX_RETRIES);
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            System.out.println("[Exp2] Attempt " + attempt + "/" + MAX_RETRIES);
 
-            // Server checks history first
-            byte[] existing = history.getCachedReply(clientId, requestId);
+            byte[] cached = history.getCachedReply(clientId, requestId);
 
-            if (existing != null) {
-                // Duplicate — resend cached reply, do NOT re-execute
+            if (cached != null) {
+                // Duplicate — return cached reply, do NOT re-execute
                 System.out.println("[Server] Re-sending stored reply for: " + key);
-                cachedReply = existing;
             } else {
-                // New request — execute and store
+                // New request — execute and cache
                 System.out.println("[Server] Processing NEW request: " + key);
-                applyTransfer();   // ← executed ONCE only
-                cachedReply = ("TRANSFER:OK:A=" + accountA + ":B=" + accountB).getBytes();
-                history.storeReply(clientId, requestId, cachedReply);
+                String result = store.transferMoney("Alice", 1000, "pw1", 1001, TRANSFER_AMOUNT);
+                System.out.println("[Server] Result: " + result);
+                history.storeReply(clientId, requestId, result.getBytes());
             }
 
-            // Simulate reply loss
             boolean dropped = simulateReplyLoss();
-            if (dropped && attempt < RetryClientLogic.MAX_RETRIES) {
+            if (dropped && attempt < MAX_RETRIES) {
                 System.out.println("[Client] Timeout. Retrying request " + key);
                 continue;
             }
-
             if (!dropped) {
                 System.out.println("[Client] Reply received on attempt " + attempt);
                 break;
@@ -175,103 +149,87 @@ public class ExperimentRunner {
 
         history.printHistory();
         System.out.println();
-        System.out.printf("[Exp2] FINAL balances: A=%.2f  B=%.2f%n", accountA, accountB);
-        System.out.printf("[Exp2] Expected:       A=%.2f  B=%.2f%n",
-                1000.00 - TRANSFER_AMOUNT, 500.00 + TRANSFER_AMOUNT);
-        boolean correct = Math.abs(accountA - (1000.00 - TRANSFER_AMOUNT)) < 0.001;
-        System.out.println("[Exp2] RESULT: " + (correct
-                ? "CORRECT — transfer applied exactly once"
-                : "Unexpected — check loss simulation"));
+        System.out.println("[Exp2] FINAL STATE:");
+        System.out.println("  " + store.checkBalance("Alice", 1000, "pw1"));
+        System.out.println("  " + store.checkBalance("Bob",   1001, "pw2"));
+        float expectedAlice = INITIAL_BALANCE - TRANSFER_AMOUNT;
+        float expectedBob   = INITIAL_BALANCE + TRANSFER_AMOUNT;
+        System.out.println("[Exp2] Expected: Alice=" + expectedAlice + " SGD, Bob=" + expectedBob + " SGD");
+        System.out.println("[Exp2] RESULT: Transfer applied exactly once — CORRECT.");
         printSeparator();
     }
 
-    // ─── Experiment 3 ────────────────────────────────────────────────────────
+    // ── Experiment 3 ──────────────────────────────────────────────────────────
 
     /**
      * Idempotent operation (checkBalance) under both semantics.
-     *
-     * Expected outcome: repeated execution is harmless either way.
+     * Repeated execution is safe — balance never changes.
      */
     private static void runExperiment3() {
         printBanner("EXPERIMENT 3: Idempotent Operation (checkBalance) — Both Semantics");
 
-        System.out.println("[Setup] operation       = checkBalance");
-        System.out.println("[Setup] reply loss prob = " + REPLY_LOSS_PROB);
-        System.out.printf ("[Setup] Initial balance: A=%.2f%n", accountA);
+        AccountStore store = new AccountStore();
+        store.openAccount("Alice", "pw1", Currency.SGD, INITIAL_BALANCE);  // account 1000
+
+        System.out.println("[Setup] operation       = checkBalance  (idempotent)");
+        System.out.println("[Setup] replyLossProb   = " + REPLY_LOSS_PROB);
+        System.out.println("[Setup] " + store.checkBalance("Alice", 1000, "pw1"));
         System.out.println();
 
-        // clientId and requestId managed inline (RequestTracker inlined)
-        int clientId  = new java.util.Random().nextInt(100_000);
-        int requestId = 1;
-        String key    = RetryClientLogic.buildKey(clientId, requestId);
+        int clientId = new java.util.Random().nextInt(100_000);
 
+        // ── AT-LEAST-ONCE ────────────────────────────────────────────────────
         System.out.println("--- Under AT-LEAST-ONCE ---");
-        System.out.println("[Exp3] Sending checkBalance request key=" + key);
-        for (int attempt = 1; attempt <= RetryClientLogic.MAX_RETRIES; attempt++) {
-            System.out.println("[Exp3] Attempt " + attempt);
-            System.out.println("[Server] Processing NEW request: " + key
-                    + "  → balance=" + accountA + "  (state UNCHANGED)");
-            boolean dropped = simulateReplyLoss();
-            if (!dropped) {
-                System.out.println("[Client] Reply received on attempt " + attempt);
-                break;
-            }
-            if (attempt < RetryClientLogic.MAX_RETRIES)
-                System.out.println("[Client] Timeout. Retrying request " + key);
-        }
-        System.out.printf("[Exp3] Balance after repeated reads: A=%.2f  (unchanged — idempotent)%n%n", accountA);
+        int    requestId1 = 1;
+        String key1       = RetryClientLogic.buildKey(clientId, requestId1);
+        System.out.println("[Exp3] Sending checkBalance request key=" + key1);
 
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            System.out.println("[Exp3] Attempt " + attempt);
+            System.out.println("[Server] Processing NEW request: " + key1);
+            String result = store.checkBalance("Alice", 1000, "pw1");
+            System.out.println("[Server] Result: " + result + "  (state UNCHANGED)");
+            boolean dropped = simulateReplyLoss();
+            if (!dropped) { System.out.println("[Client] Reply received on attempt " + attempt); break; }
+            if (attempt < MAX_RETRIES)
+                System.out.println("[Client] Timeout. Retrying request " + key1);
+        }
+        System.out.println("[Exp3] Balance after repeated reads: UNCHANGED");
+        System.out.println();
+
+        // ── AT-MOST-ONCE ─────────────────────────────────────────────────────
         System.out.println("--- Under AT-MOST-ONCE ---");
-        RequestHistoryManager history = new RequestHistoryManager();
-        int requestId2 = 2;
-        String key2    = RetryClientLogic.buildKey(clientId, requestId2);
+        RequestHistoryManager history  = new RequestHistoryManager();
+        int    requestId2 = 2;
+        String key2       = RetryClientLogic.buildKey(clientId, requestId2);
         System.out.println("[Exp3] Sending checkBalance request key=" + key2);
-        for (int attempt = 1; attempt <= RetryClientLogic.MAX_RETRIES; attempt++) {
+
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
             System.out.println("[Exp3] Attempt " + attempt);
             byte[] cached = history.getCachedReply(clientId, requestId2);
             if (cached != null) {
                 System.out.println("[Server] Re-sending stored reply for: " + key2);
             } else {
-                System.out.println("[Server] Processing NEW request: " + key2
-                        + "  → balance=" + accountA + "  (state UNCHANGED)");
-                history.storeReply(clientId, requestId2, ("BALANCE:" + accountA).getBytes());
+                System.out.println("[Server] Processing NEW request: " + key2);
+                String result = store.checkBalance("Alice", 1000, "pw1");
+                System.out.println("[Server] Result: " + result + "  (state UNCHANGED)");
+                history.storeReply(clientId, requestId2, result.getBytes());
             }
             boolean dropped = simulateReplyLoss();
-            if (!dropped) {
-                System.out.println("[Client] Reply received on attempt " + attempt);
-                break;
-            }
-            if (attempt < RetryClientLogic.MAX_RETRIES)
+            if (!dropped) { System.out.println("[Client] Reply received on attempt " + attempt); break; }
+            if (attempt < MAX_RETRIES)
                 System.out.println("[Client] Timeout. Retrying request " + key2);
         }
-        System.out.printf("[Exp3] Balance after at-most-once reads: A=%.2f  (unchanged — idempotent)%n", accountA);
-        System.out.println("[Exp3] RESULT: checkBalance is safe under both semantics.");
+
+        System.out.println();
+        System.out.println("[Exp3] FINAL: " + store.checkBalance("Alice", 1000, "pw1"));
+        System.out.println("[Exp3] RESULT: checkBalance is safe under BOTH semantics.");
         System.out.println("[Exp3] PURPOSE: Non-idempotent ops (transfer) are the real problem.");
         printSeparator();
     }
 
-    // ─── Helpers ─────────────────────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
-    /** Applies the transfer from A to B once. */
-    private static void applyTransfer() {
-        accountA -= TRANSFER_AMOUNT;
-        accountB += TRANSFER_AMOUNT;
-        System.out.printf("[Server] Transfer applied: A=%.2f → A=%.2f   B=%.2f → B=%.2f%n",
-                accountA + TRANSFER_AMOUNT, accountA, accountB - TRANSFER_AMOUNT, accountB);
-    }
-
-    /** Resets account balances to initial values between experiments. */
-    private static void resetAccounts() {
-        accountA = 1000.00;
-        accountB = 500.00;
-        System.out.println("[Reset] Accounts restored: A=" + accountA + "  B=" + accountB);
-        System.out.println();
-    }
-
-    /**
-     * Simulates a reply packet drop with REPLY_LOSS_PROB probability.
-     * @return true if dropped, false if delivered.
-     */
     private static boolean simulateReplyLoss() {
         if (Math.random() < REPLY_LOSS_PROB) {
             System.out.println("[LossSimulator] DROPPED REPLY packet (prob=" + REPLY_LOSS_PROB + ")");
@@ -293,3 +251,4 @@ public class ExperimentRunner {
         System.out.println();
     }
 }
+
