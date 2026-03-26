@@ -1,112 +1,153 @@
 import java.util.HashMap;
-// holds all accounts in memory + contains handler methods 
+import java.util.Map;
+
+/**
+ * AccountStore — in-memory bank account repository and service logic.
+ */
 public class AccountStore {
-    private HashMap<Integer, Account> accounts = new HashMap<>();
+
+    private final Map<Integer, Account> accounts = new HashMap<>();
     private int nextAccountNumber = 1000;
 
-    // OPEN ACCOUNT:
-    public String openAccount(String name, String password, String currency, float initialBalance) {
-        int newAccountNo = nextAccountNumber++; 
+    // ── OPEN ACCOUNT ─────────────────────────────────────────────────────────
+
+    public String openAccount(String name, String password, Currency currency, float initialBalance) {
+        if (name == null || name.trim().isEmpty()) {
+            return "ERROR: Name cannot be empty.";
+        }
+        if (password == null || password.trim().isEmpty()) {
+            return "ERROR: Password cannot be empty.";
+        }
+        if (initialBalance < 0) {
+            return "ERROR: Initial balance cannot be negative.";
+        }
+
+        int newAccountNo = nextAccountNumber++;
         Account acc = new Account(newAccountNo, name, password, currency, initialBalance);
         accounts.put(newAccountNo, acc);
         return "Account opened successfully. Account Number: " + newAccountNo;
-        // add smt for the monitor updates part ?
     }
 
-    // CLOSE ACCOUNT:
+    // ── CLOSE ACCOUNT ────────────────────────────────────────────────────────
+
     public String closeAccount(String name, int accountNo, String password) {
-        if (!accounts.containsKey(accountNo)) {
+        Account acc = accounts.get(accountNo);
+        if (acc == null) {
             return "ERROR: Account " + accountNo + " does not exist.";
         }
-        Account acc = accounts.get(accountNo);
-        if (!acc.name.equals(name)) {
-            return "ERROR: Account does not belong to " + name;
+        if (!acc.getName().equals(name)) {
+            return "ERROR: Account does not belong to " + name + ".";
         }
-        if (!acc.password.equals(password)) {
+        if (!acc.getPassword().equals(password)) {
             return "ERROR: Incorrect password.";
         }
         accounts.remove(accountNo);
         return "Account " + accountNo + " closed successfully.";
-        // add smt for the monitor updates part ?
     }
 
-    // DEPOSIT:
-    public String deposit(String name, int accountNo, String password, String currency, float amount) {
-        if (!accounts.containsKey(accountNo)) {
+    // ── DEPOSIT ──────────────────────────────────────────────────────────────
+
+    public String deposit(String name, int accountNo, String password, Currency currency, float amount) {
+        Account acc = accounts.get(accountNo);
+        if (acc == null) {
             return "ERROR: Account " + accountNo + " does not exist.";
         }
-        Account acc = accounts.get(accountNo);
-        if (!acc.name.equals(name)) {
-            return "ERROR: Account does not belong to " + name;
+        if (!acc.getName().equals(name)) {
+            return "ERROR: Account does not belong to " + name + ".";
         }
-        if (!acc.password.equals(password)) {
+        if (!acc.getPassword().equals(password)) {
             return "ERROR: Incorrect password.";
         }
-        acc.balance += amount;
-        return "Deposit successful. New balance: " + acc.balance;
-        // add smt for the monitor updates part ?
-    }
-    
-    // WITHDRAW:
-    public String withdraw(String name, int accountNo, String password, String currency, float amount) {
-        if (!accounts.containsKey(accountNo)) {
-            return "ERROR: Account " + accountNo + " does not exist.";
+        if (amount <= 0) {
+            return "ERROR: Deposit amount must be positive.";
         }
-        Account acc = accounts.get(accountNo);
-        if (!acc.name.equals(name)) {
-            return "ERROR: Account does not belong to " + name;
+        if (acc.getCurrency() != currency) {
+            return "ERROR: Currency mismatch. Account currency is "
+                    + acc.getCurrency() + " but deposit currency is " + currency + ".";
         }
-        if (!acc.password.equals(password)) {
-            return "ERROR: Incorrect password.";
-        }
-        if (acc.balance < amount) {
-            return "ERROR: Insufficient funds.";
-        }
-        acc.balance -= amount;
-        return "Withdrawal successful. New balance: " + acc.balance;
-        // add smt for the monitor updates part ?
+        acc.deposit(amount);
+        return "Deposit successful. New balance: " + acc.getBalance() + " " + acc.getCurrency();
     }
 
-    // CHECK BALANCE (IDEMPOTENT OPERATION):
+    // ── WITHDRAW ─────────────────────────────────────────────────────────────
+
+    public String withdraw(String name, int accountNo, String password, Currency currency, float amount) {
+        Account acc = accounts.get(accountNo);
+        if (acc == null) {
+            return "ERROR: Account " + accountNo + " does not exist.";
+        }
+        if (!acc.getName().equals(name)) {
+            return "ERROR: Account does not belong to " + name + ".";
+        }
+        if (!acc.getPassword().equals(password)) {
+            return "ERROR: Incorrect password.";
+        }
+        if (amount <= 0) {
+            return "ERROR: Withdrawal amount must be positive.";
+        }
+        if (acc.getCurrency() != currency) {
+            return "ERROR: Currency mismatch. Account currency is "
+                    + acc.getCurrency() + " but withdrawal currency is " + currency + ".";
+        }
+        if (acc.getBalance() < amount) {
+            return "ERROR: Insufficient funds. Balance: " + acc.getBalance() + " " + acc.getCurrency();
+        }
+        acc.withdraw(amount);
+        return "Withdrawal successful. New balance: " + acc.getBalance() + " " + acc.getCurrency();
+    }
+
+    // ── CHECK BALANCE (idempotent) ────────────────────────────────────────────
+
     public String checkBalance(String name, int accountNo, String password) {
-        if (!accounts.containsKey(accountNo)) {
+        Account acc = accounts.get(accountNo);
+        if (acc == null) {
             return "ERROR: Account " + accountNo + " does not exist.";
         }
-        Account acc = accounts.get(accountNo);
-        if (!acc.name.equals(name)) {
-            return "ERROR: Account does not belong to " + name;
+        if (!acc.getName().equals(name)) {
+            return "ERROR: Account does not belong to " + name + ".";
         }
-        if (!acc.password.equals(password)) {
+        if (!acc.getPassword().equals(password)) {
             return "ERROR: Incorrect password.";
         }
-        return "Current balance of account " + accountNo + " = " + acc.balance + " " + acc.currency;
-        }
+        return "Current balance of account " + accountNo
+                + " = " + acc.getBalance() + " " + acc.getCurrency();
+    }
 
-    // TRANSFER MONEY (NON-IDEMPOTENT OPERATION):
-    public String transferMoney(String senderName, int senderAccountNo, String password, int recipientAccountNo, float amount) {
-        if (!accounts.containsKey(senderAccountNo)) {
-            return "ERROR: Account " + senderAccountNo + " does not exist.";
-        }
-        if (!accounts.containsKey(recipientAccountNo)) {
-            return "ERROR: Account " + recipientAccountNo + " does not exist.";
-        }
+    // ── TRANSFER MONEY (non-idempotent) ──────────────────────────────────────
 
-        Account senderAcc = accounts.get(senderAccountNo);
-        Account recipientAcc = accounts.get(recipientAccountNo);
+    public String transferMoney(String senderName, int senderAccountNo, String password,
+                                int recipientAccountNo, float amount) {
+        Account sender = accounts.get(senderAccountNo);
+        Account recipient = accounts.get(recipientAccountNo);
 
-        if (!senderAcc.name.equals(senderName)) {
-            return "ERROR: Account " + senderAccountNo + " does not belong to " + senderName;
+        if (sender == null) {
+            return "ERROR: Sender account " + senderAccountNo + " does not exist.";
         }
-        if (!senderAcc.password.equals(password)) {
+        if (recipient == null) {
+            return "ERROR: Recipient account " + recipientAccountNo + " does not exist.";
+        }
+        if (!sender.getName().equals(senderName)) {
+            return "ERROR: Account " + senderAccountNo + " does not belong to " + senderName + ".";
+        }
+        if (!sender.getPassword().equals(password)) {
             return "ERROR: Incorrect password.";
         }
-        if (senderAcc.balance < amount) {
-            return "ERROR: Insufficient funds.";
+        if (amount <= 0) {
+            return "ERROR: Transfer amount must be positive.";
+        }
+        if (sender.getCurrency() != recipient.getCurrency()) {
+            return "ERROR: Currency mismatch. Cannot transfer between "
+                    + sender.getCurrency() + " and " + recipient.getCurrency() + " accounts.";
+        }
+        if (sender.getBalance() < amount) {
+            return "ERROR: Insufficient funds. Balance: "
+                    + sender.getBalance() + " " + sender.getCurrency();
         }
 
-        // transfer:
-        senderAcc.balance -= amount;
-        recipientAcc.balance += amount;
-        return "SUCCESS! Transferred " + amount + " from account " + senderAccountNo + " to account " + recipientAccountNo + ". Your current balance is " + senderAcc.balance + " " + senderAcc.currency;
+        sender.withdraw(amount);
+        recipient.deposit(amount);
+        return "Transfer successful. Transferred " + amount + " " + sender.getCurrency()
+                + " from account " + senderAccountNo + " to account " + recipientAccountNo
+                + ". Your new balance: " + sender.getBalance() + " " + sender.getCurrency();
     }
 }
