@@ -6,17 +6,7 @@ import java.util.Random;
 import java.util.Scanner;
 
 /**
- * Client
- *
- * Interactive console UDP client for the banking system.
- *
- * Responsibilities:
- * - Provide a text menu for all required operations.
- * - Marshal request arguments into byte[] payloads (via BankProtocol).
- * - Add retry header (clientId/requestId) and send over UDP.
- * - Retry on timeout using SAME requestId (required by assignment semantics).
- * - Unmarshal server reply and print result.
- * - Support monitor registration and callback reception.
+ * Client — interactive console UDP banking client.
  *
  * Usage:
  *   java Client <serverHost> <serverPort> <at-least-once|at-most-once> [requestLossProb]
@@ -27,37 +17,28 @@ import java.util.Scanner;
 public class Client {
 
     private static final int DEFAULT_SERVER_PORT = 2222;
-    private static final int BUFFER_SIZE = 8192;
-    private static final int TIMEOUT_MS = 2000;
-    private static final int MAX_RETRIES = 3;
+    private static final int BUFFER_SIZE         = 8192;
+    private static final int TIMEOUT_MS          = 2000;
+    private static final int MAX_RETRIES         = 3;
 
-    private final DatagramSocket socket;
-    private final InetAddress serverAddress;
-    private final int serverPort;
-    private final LossSimulator requestLossSimulator;
+    private final DatagramSocket              socket;
+    private final InetAddress                serverAddress;
+    private final int                        serverPort;
+    private final LossSimulator              requestLossSimulator;
     private final BankProtocol.InvocationSemantics semantics;
 
     private final int clientId;
     private int requestCounter = 0;
 
-    public Client(
-            String serverHost,
-            int serverPort,
-            BankProtocol.InvocationSemantics semantics,
-            double requestLossProb) throws Exception {
-        this.serverAddress = InetAddress.getByName(serverHost);
-        this.serverPort = serverPort;
-        this.semantics = semantics;
-
-        // One socket used for BOTH send and receive.
-        // This is critical because server callbacks are sent to the source port
-        // from which the register-monitor request originated.
-        this.socket = new DatagramSocket();
-
-        // Client-side loss simulator: request loss only.
+    public Client(String serverHost, int serverPort,
+                  BankProtocol.InvocationSemantics semantics,
+                  double requestLossProb) throws Exception {
+        this.serverAddress        = InetAddress.getByName(serverHost);
+        this.serverPort           = serverPort;
+        this.semantics            = semantics;
+        this.socket               = new DatagramSocket();
         this.requestLossSimulator = new LossSimulator(this.socket, requestLossProb, 0.0);
-
-        this.clientId = new Random().nextInt(100_000);
+        this.clientId             = new Random().nextInt(100_000);
 
         System.out.println("[Client] Started. localPort=" + socket.getLocalPort());
         System.out.println("[Client] server=" + serverHost + ":" + serverPort);
@@ -66,8 +47,8 @@ public class Client {
     }
 
     public static void main(String[] args) throws Exception {
-        String serverHost = (args.length >= 1) ? args[0] : "127.0.0.1";
-        int serverPort = (args.length >= 2) ? Integer.parseInt(args[1]) : DEFAULT_SERVER_PORT;
+        String serverHost   = (args.length >= 1) ? args[0] : "127.0.0.1";
+        int    serverPort   = (args.length >= 2) ? Integer.parseInt(args[1]) : DEFAULT_SERVER_PORT;
         BankProtocol.InvocationSemantics semantics = (args.length >= 3)
                 ? BankProtocol.InvocationSemantics.fromString(args[2])
                 : BankProtocol.InvocationSemantics.AT_MOST_ONCE;
@@ -77,49 +58,25 @@ public class Client {
         client.runMenu();
     }
 
-    /**
-     * Main interactive loop.
-     *
-     * For assignment requirements this loop repeatedly asks user input,
-     * sends request, prints reply, and allows graceful termination.
-     */
+    // ── Main menu loop ────────────────────────────────────────────────────────
+
     private void runMenu() {
         try (Scanner scanner = new Scanner(System.in)) {
             boolean running = true;
-
             while (running) {
                 printMenu();
                 int choice = readInt(scanner, "Choose option: ");
-
                 try {
                     switch (choice) {
-                        case 1:
-                            handleOpenAccount(scanner);
-                            break;
-                        case 2:
-                            handleCloseAccount(scanner);
-                            break;
-                        case 3:
-                            handleDeposit(scanner);
-                            break;
-                        case 4:
-                            handleWithdraw(scanner);
-                            break;
-                        case 5:
-                            handleRegisterMonitor(scanner);
-                            break;
-                        case 6:
-                            handleCheckBalance(scanner);
-                            break;
-                        case 7:
-                            handleTransferMoney(scanner);
-                            break;
-                        case 8:
-                            running = false;
-                            System.out.println("[Client] Exiting.");
-                            break;
-                        default:
-                            System.out.println("Invalid menu choice. Please try again.");
+                        case 1: handleOpenAccount(scanner);    break;
+                        case 2: handleCloseAccount(scanner);   break;
+                        case 3: handleDeposit(scanner);        break;
+                        case 4: handleWithdraw(scanner);       break;
+                        case 5: handleRegisterMonitor(scanner);break;
+                        case 6: handleCheckBalance(scanner);   break;
+                        case 7: handleTransferMoney(scanner);  break;
+                        case 8: running = false; System.out.println("[Client] Exiting."); break;
+                        default: System.out.println("Invalid choice. Please try again.");
                     }
                 } catch (Exception ex) {
                     System.out.println("Request failed: " + ex.getMessage());
@@ -130,46 +87,44 @@ public class Client {
         }
     }
 
-    // ---------------------------------------------------------------------
-    // Menu operation handlers
-    // ---------------------------------------------------------------------
+    // ── Operation handlers ────────────────────────────────────────────────────
 
     private void handleOpenAccount(Scanner scanner) throws Exception {
-        String name = readLine(scanner, "Name: ");
-        String password = readLine(scanner, "Password: ");
-        String currency = readLine(scanner, "Currency (e.g. SGD): ");
-        float initialBalance = readFloat(scanner, "Initial balance: ");
+        String   name           = readLine(scanner,  "Name: ");
+        String   password       = readLine(scanner,  "Password: ");
+        Currency currency       = readCurrency(scanner);
+        float    initialBalance = readFloat(scanner, "Initial balance: ");
 
         byte[] payload = BankProtocol.marshalOpenAccountRequest(name, password, currency, initialBalance);
         printReply(invokeWithRetry(payload));
     }
 
     private void handleCloseAccount(Scanner scanner) throws Exception {
-        String name = readLine(scanner, "Name: ");
-        int accountNo = readInt(scanner, "Account number: ");
-        String password = readLine(scanner, "Password: ");
+        String name      = readLine(scanner, "Name: ");
+        int    accountNo = readInt(scanner,  "Account number: ");
+        String password  = readLine(scanner, "Password: ");
 
         byte[] payload = BankProtocol.marshalCloseAccountRequest(name, accountNo, password);
         printReply(invokeWithRetry(payload));
     }
 
     private void handleDeposit(Scanner scanner) throws Exception {
-        String name = readLine(scanner, "Name: ");
-        int accountNo = readInt(scanner, "Account number: ");
-        String password = readLine(scanner, "Password: ");
-        String currency = readLine(scanner, "Currency: ");
-        float amount = readFloat(scanner, "Deposit amount: ");
+        String   name      = readLine(scanner,  "Name: ");
+        int      accountNo = readInt(scanner,   "Account number: ");
+        String   password  = readLine(scanner,  "Password: ");
+        Currency currency  = readCurrency(scanner);
+        float    amount    = readFloat(scanner, "Deposit amount: ");
 
         byte[] payload = BankProtocol.marshalDepositRequest(name, accountNo, password, currency, amount);
         printReply(invokeWithRetry(payload));
     }
 
     private void handleWithdraw(Scanner scanner) throws Exception {
-        String name = readLine(scanner, "Name: ");
-        int accountNo = readInt(scanner, "Account number: ");
-        String password = readLine(scanner, "Password: ");
-        String currency = readLine(scanner, "Currency: ");
-        float amount = readFloat(scanner, "Withdraw amount: ");
+        String   name      = readLine(scanner,  "Name: ");
+        int      accountNo = readInt(scanner,   "Account number: ");
+        String   password  = readLine(scanner,  "Password: ");
+        Currency currency  = readCurrency(scanner);
+        float    amount    = readFloat(scanner, "Withdraw amount: ");
 
         byte[] payload = BankProtocol.marshalWithdrawRequest(name, accountNo, password, currency, amount);
         printReply(invokeWithRetry(payload));
@@ -182,78 +137,58 @@ public class Client {
         BankProtocol.Reply reply = invokeWithRetry(payload);
         printReply(reply);
 
-        // Assignment simplification: block this client during monitor interval.
-        // We reuse the shared helper from MonitorManager for callback receive loop.
         if (reply != null && reply.success) {
             MonitorManager.receiveCallbacks(socket, intervalSeconds);
         }
     }
 
     private void handleCheckBalance(Scanner scanner) throws Exception {
-        String name = readLine(scanner, "Name: ");
-        int accountNo = readInt(scanner, "Account number: ");
-        String password = readLine(scanner, "Password: ");
+        String name      = readLine(scanner, "Name: ");
+        int    accountNo = readInt(scanner,  "Account number: ");
+        String password  = readLine(scanner, "Password: ");
 
         byte[] payload = BankProtocol.marshalCheckBalanceRequest(name, accountNo, password);
         printReply(invokeWithRetry(payload));
     }
 
     private void handleTransferMoney(Scanner scanner) throws Exception {
-        String senderName = readLine(scanner, "Sender name: ");
-        int senderAccountNo = readInt(scanner, "Sender account number: ");
-        String password = readLine(scanner, "Sender password: ");
-        int recipientAccountNo = readInt(scanner, "Recipient account number: ");
-        float amount = readFloat(scanner, "Transfer amount: ");
+        String name               = readLine(scanner,  "Sender name: ");
+        int    senderAccountNo    = readInt(scanner,   "Sender account number: ");
+        String password           = readLine(scanner,  "Sender password: ");
+        int    recipientAccountNo = readInt(scanner,   "Recipient account number: ");
+        float  amount             = readFloat(scanner, "Transfer amount: ");
 
         byte[] payload = BankProtocol.marshalTransferMoneyRequest(
-                senderName,
-                senderAccountNo,
-                password,
-                recipientAccountNo,
-                amount);
+                name, senderAccountNo, password, recipientAccountNo, amount);
         printReply(invokeWithRetry(payload));
     }
 
-    // ---------------------------------------------------------------------
-    // Transport + retry logic
-    // ---------------------------------------------------------------------
+    // ── Transport + retry ─────────────────────────────────────────────────────
 
     /**
-     * Sends ONE logical request with retry.
-     *
-     * Core semantic rule:
-     * - requestId is generated ONCE before retry loop and never changed on retries.
-     *
-     * Return value:
-     * - Decoded reply from server, or null if all retries exhausted.
+     * Sends one logical request with retry.
+     * requestId is generated ONCE and never changed on retries.
      */
     private BankProtocol.Reply invokeWithRetry(byte[] requestPayload) throws Exception {
-        int requestId = nextRequestId();
-        String key = RetryClientLogic.buildKey(clientId, requestId);
-
+        int    requestId   = nextRequestId();
+        String key         = RetryClientLogic.buildKey(clientId, requestId);
         byte[] fullRequest = RetryClientLogic.wrapWithHeader(clientId, requestId, requestPayload);
 
         for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
             System.out.println("[Client] Sending attempt " + attempt + "/" + MAX_RETRIES + " key=" + key);
 
             DatagramPacket sendPacket = new DatagramPacket(
-                    fullRequest,
-                    fullRequest.length,
-                    serverAddress,
-                    serverPort);
+                    fullRequest, fullRequest.length, serverAddress, serverPort);
             requestLossSimulator.send(sendPacket, "REQUEST");
 
             long deadline = System.currentTimeMillis() + TIMEOUT_MS;
 
             while (true) {
-                int remaining = (int) (deadline - System.currentTimeMillis());
-                if (remaining <= 0) {
-                    break;
-                }
+                int remaining = (int)(deadline - System.currentTimeMillis());
+                if (remaining <= 0) break;
 
                 socket.setSoTimeout(remaining);
-
-                byte[] recvBuffer = new byte[BUFFER_SIZE];
+                byte[]         recvBuffer  = new byte[BUFFER_SIZE];
                 DatagramPacket replyPacket = new DatagramPacket(recvBuffer, recvBuffer.length);
 
                 try {
@@ -262,36 +197,32 @@ public class Client {
                     break;
                 }
 
-                int len = replyPacket.getLength();
+                int    len  = replyPacket.getLength();
                 byte[] data = replyPacket.getData();
 
-                // If this is a monitor callback packet, print and continue waiting
-                // for the real request/reply response.
+                // Monitor callback — print and keep waiting for the real reply
                 String callback = MonitorManager.parseUpdateMessage(data, len);
                 if (callback != null) {
                     System.out.println("[CALLBACK] " + callback);
                     continue;
                 }
 
-                // Must contain retry header.
                 if (len < 8) {
                     System.out.println("[Client] Ignored malformed packet (len=" + len + ")");
                     continue;
                 }
 
-                int replyClientId = RetryClientLogic.readInt(data, 0);
+                int replyClientId  = RetryClientLogic.readInt(data, 0);
                 int replyRequestId = RetryClientLogic.readInt(data, 4);
 
-                // Ignore packets that do not belong to this outstanding request.
                 if (replyClientId != clientId || replyRequestId != requestId) {
                     System.out.println("[Client] Ignored unrelated reply key="
-+                            RetryClientLogic.buildKey(replyClientId, replyRequestId));
+                            + RetryClientLogic.buildKey(replyClientId, replyRequestId));
                     continue;
                 }
 
                 byte[] replyPayload = RetryClientLogic.stripHeader(data, len);
-                BankProtocol.Reply reply = BankProtocol.unmarshalReply(replyPayload, replyPayload.length);
-                return reply;
+                return BankProtocol.unmarshalReply(replyPayload, replyPayload.length);
             }
 
             System.out.println("[Client] Timeout for key=" + key + ". Retrying...");
@@ -301,14 +232,9 @@ public class Client {
         return null;
     }
 
-    private int nextRequestId() {
-        requestCounter++;
-        return requestCounter;
-    }
+    private int nextRequestId() { return ++requestCounter; }
 
-    // ---------------------------------------------------------------------
-    // Console helpers
-    // ---------------------------------------------------------------------
+    // ── Console helpers ───────────────────────────────────────────────────────
 
     private static void printMenu() {
         System.out.println();
@@ -332,6 +258,22 @@ public class Client {
         System.out.println((reply.success ? "SUCCESS: " : "ERROR: ") + reply.message);
     }
 
+    /**
+     * Reads a Currency enum from console input.
+     * Shows valid options and re-prompts on invalid input.
+     */
+    private static Currency readCurrency(Scanner scanner) {
+        while (true) {
+            System.out.print("Currency (" + Currency.menuOptions() + "): ");
+            String raw = scanner.nextLine().trim();
+            try {
+                return Currency.fromString(raw);
+            } catch (IllegalArgumentException e) {
+                System.out.println(e.getMessage());
+            }
+        }
+    }
+
     private static String readLine(Scanner scanner, String prompt) {
         System.out.print(prompt);
         return scanner.nextLine().trim();
@@ -340,24 +282,17 @@ public class Client {
     private static int readInt(Scanner scanner, String prompt) {
         while (true) {
             System.out.print(prompt);
-            String raw = scanner.nextLine().trim();
-            try {
-                return Integer.parseInt(raw);
-            } catch (NumberFormatException ex) {
-                System.out.println("Please enter a valid integer.");
-            }
+            try { return Integer.parseInt(scanner.nextLine().trim()); }
+            catch (NumberFormatException ex) { System.out.println("Please enter a valid integer."); }
         }
     }
 
     private static float readFloat(Scanner scanner, String prompt) {
         while (true) {
             System.out.print(prompt);
-            String raw = scanner.nextLine().trim();
-            try {
-                return Float.parseFloat(raw);
-            } catch (NumberFormatException ex) {
-                System.out.println("Please enter a valid floating-point number.");
-            }
+            try { return Float.parseFloat(scanner.nextLine().trim()); }
+            catch (NumberFormatException ex) { System.out.println("Please enter a valid number."); }
         }
     }
 }
+
