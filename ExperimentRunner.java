@@ -1,30 +1,11 @@
 import java.net.*;
 
-/**
- * ─── Experiments ──────────────────────────────────────────────────────────
- *
- *  Experiment 1 — At-least-once + non-idempotent + reply loss
- *    Setup:  semantics = at-least-once, replyLossProb = 0.3, op = transferMoney
- *    Result: Server may process the transfer multiple times → wrong balance.
- *
- *  Experiment 2 — At-most-once + non-idempotent + reply loss
- *    Setup:  semantics = at-most-once, replyLossProb = 0.3, op = transferMoney
- *    Result: Server executes once, returns cached reply on retries → correct balance.
- *
- *  Experiment 3 — Idempotent operation (checkBalance) under both semantics
- *    Setup:  op = checkBalance, both semantics
- *    Result: Repeated execution is safe either way → state unchanged.
- */
 public class ExperimentRunner {
-
-    // ── Configuration ─────────────────────────────────────────────────────────
 
     private static final double REPLY_LOSS_PROB  = 0.5;   // 50% ensures retries are likely
     private static final float  INITIAL_BALANCE  = 1000f;
     private static final float  TRANSFER_AMOUNT  = 200f;
     private static final int    MAX_RETRIES      = RetryClientLogic.MAX_RETRIES;
-
-    // ── Entry point ───────────────────────────────────────────────────────────
 
     public static void main(String[] args) {
         printBanner("WEEK 3 EXPERIMENT RUNNER");
@@ -34,12 +15,8 @@ public class ExperimentRunner {
         runExperiment3();
     }
 
-    // ── Experiment 1 ──────────────────────────────────────────────────────────
-
-    /**
-     * AT-LEAST-ONCE + transferMoney + reply loss.
-     * Server re-executes on every retry → balance deducted multiple times.
-     */
+    //Experiment 1 AT-LEAST-ONCE + transferMoney + reply loss.
+    
     private static void runExperiment1() {
         printBanner("EXPERIMENT 1: At-Least-Once + Non-Idempotent + Reply Loss");
 
@@ -91,12 +68,7 @@ public class ExperimentRunner {
         printSeparator();
     }
 
-    // ── Experiment 2 ──────────────────────────────────────────────────────────
-
-    /**
-     * AT-MOST-ONCE + transferMoney + reply loss.
-     * RequestHistoryManager caches first reply → retries get cached reply → transfer applied once.
-     */
+    // Experiment 2 AT-MOST-ONCE + transferMoney + reply loss.
     private static void runExperiment2() {
         printBanner("EXPERIMENT 2: At-Most-Once + Non-Idempotent + Reply Loss");
 
@@ -159,12 +131,7 @@ public class ExperimentRunner {
         printSeparator();
     }
 
-    // ── Experiment 3 ──────────────────────────────────────────────────────────
-
-    /**
-     * Idempotent operation (checkBalance) under both semantics.
-     * Repeated execution is safe — balance never changes.
-     */
+    //Experiment 3 Idempotent operation (checkBalance) under both semantics.
     private static void runExperiment3() {
         printBanner("EXPERIMENT 3: Idempotent Operation (checkBalance) — Both Semantics");
 
@@ -178,7 +145,7 @@ public class ExperimentRunner {
 
         int clientId = new java.util.Random().nextInt(100_000);
 
-        // ── AT-LEAST-ONCE ────────────────────────────────────────────────────
+        //AT-LEAST-ONCE
         System.out.println("--- Under AT-LEAST-ONCE ---");
         int    requestId1 = 1;
         String key1       = RetryClientLogic.buildKey(clientId, requestId1);
@@ -197,7 +164,7 @@ public class ExperimentRunner {
         System.out.println("[Exp3] Balance after repeated reads: UNCHANGED");
         System.out.println();
 
-        // ── AT-MOST-ONCE ─────────────────────────────────────────────────────
+        //AT-MOST-ONCE
         System.out.println("--- Under AT-MOST-ONCE ---");
         RequestHistoryManager history  = new RequestHistoryManager();
         int    requestId2 = 2;
@@ -228,8 +195,7 @@ public class ExperimentRunner {
         printSeparator();
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
+    //Helpers 
     private static boolean simulateReplyLoss() {
         if (Math.random() < REPLY_LOSS_PROB) {
             System.out.println("[LossSimulator] DROPPED REPLY packet (prob=" + REPLY_LOSS_PROB + ")");
