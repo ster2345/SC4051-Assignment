@@ -1,37 +1,13 @@
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 
-/**
- * Server
- *
- * UDP banking server entry point.
- *
- * Responsibilities:
- * 1) Receive request packets from clients.
- * 2) Decode the 8-byte retry header (clientId + requestId).
- * 3) Apply invocation semantics:
- *      - AT-LEAST-ONCE: process every request packet.
- *      - AT-MOST-ONCE : detect duplicates and resend cached reply.
- * 4) Unmarshal operation arguments from request payload bytes.
- * 5) Invoke AccountStore service methods.
- * 6) Marshal reply bytes and send them back over UDP.
- * 7) Notify monitor clients on successful account updates.
- *
- * Usage:
- *   java Server <port> <at-least-once|at-most-once> [replyLossProb]
- *
- * Example:
- *   java Server 2222 at-most-once 0.3
- */
 public class Server {
 
 	private static final int DEFAULT_PORT = 2222;
 	private static final double DEFAULT_REPLY_LOSS_PROB = 0.0;
 	private static final int BUFFER_SIZE = 8192;
 
-	/**
-	 * Small structured result used internally to keep request-processing code clear.
-	 */
+	// to keep request-processing code clear (only used internally) 
 	private static class ProcessResult {
 		final boolean success;
 		final String message;
@@ -55,7 +31,6 @@ public class Server {
 
 		DatagramSocket socket = new DatagramSocket(port);
 
-		// Server-side loss simulator: request loss should be 0 here;
 		// only reply/callback loss is simulated on server sends.
 		LossSimulator serverLoss = new LossSimulator(socket, 0.0, replyLossProb);
 
@@ -67,7 +42,6 @@ public class Server {
 		System.out.println("[Server] Semantics = " + semantics);
 		System.out.println("[Server] replyLossProb = " + replyLossProb);
 
-		// Main server loop: single-threaded as allowed by assignment assumptions.
 		while (true) {
 			byte[] recvBuffer = new byte[BUFFER_SIZE];
 			DatagramPacket requestPacket = new DatagramPacket(recvBuffer, recvBuffer.length);
@@ -77,8 +51,6 @@ public class Server {
 			byte[] packetData = requestPacket.getData();
 
 			if (packetLength < 8) {
-				// Cannot parse clientId/requestId header, so we cannot form a proper
-				// correlated reply. We log and drop this malformed packet.
 				System.err.println("[Server] Dropped malformed packet (<8 bytes). len=" + packetLength);
 				continue;
 			}
@@ -91,7 +63,7 @@ public class Server {
 					+ " from " + requestPacket.getAddress().getHostAddress()
 					+ ":" + requestPacket.getPort());
 
-			// AT-MOST-ONCE: if duplicate exists, resend cached full reply packet bytes.
+			// AT-MOST-ONCE: if duplicate exists, resend cached full reply packet bytes
 			if (semantics == BankProtocol.InvocationSemantics.AT_MOST_ONCE) {
 				byte[] cachedFullReply = historyManager.getCachedReply(clientId, requestId);
 				if (cachedFullReply != null) {
@@ -116,8 +88,6 @@ public class Server {
 						accountStore,
 						monitorManager);
 			} catch (Exception ex) {
-				// Any parsing/processing failure is converted into a normal error reply,
-				// so client still receives a meaningful response.
 				String err = "ERROR: Bad request format or processing failure: " + ex.getMessage();
 				result = new ProcessResult(false, err, null);
 			}
@@ -125,7 +95,7 @@ public class Server {
 			byte[] replyPayload = BankProtocol.marshalReply(result.success, result.message);
 			byte[] fullReply = RetryClientLogic.wrapWithHeader(clientId, requestId, replyPayload);
 
-			// Store the full reply bytes for duplicate re-send under AT-MOST-ONCE.
+
 			if (semantics == BankProtocol.InvocationSemantics.AT_MOST_ONCE) {
 				historyManager.storeReply(clientId, requestId, fullReply);
 			}
@@ -144,11 +114,7 @@ public class Server {
 		}
 	}
 
-	/**
-	 * Decodes one operation and dispatches it to AccountStore / MonitorManager.
-	 *
-	 * Returns both user-facing message and optional monitor callback text.
-	 */
+	
 	private static ProcessResult processRequest(
 			byte[] payload,
 			int payloadLength,
@@ -183,11 +149,11 @@ public class Server {
 
 			case BankProtocol.OP_DEPOSIT:
 				message = accountStore.deposit(
-						request.name,
-						request.accountNo,
-						request.password,
-						request.currency,
-						request.amount);
+					request.name,
+					request.accountNo,
+					request.password,
+					request.currency,
+					request.amount);
 				if (isSuccessMessage(message)) {
 					update = "DEPOSIT|acc=" + request.accountNo
 							+ "|name=" + request.name
@@ -246,10 +212,6 @@ public class Server {
 		}
 	}
 
-	/**
-	 * Your AccountStore methods return human-readable text.
-	 * We classify success/failure by checking the agreed prefix.
-	 */
 	private static boolean isSuccessMessage(String message) {
 		return message != null && !message.startsWith("ERROR");
 	}

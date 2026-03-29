@@ -1,15 +1,12 @@
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * AccountStore — in-memory bank account repository and service logic.
- */
 public class AccountStore {
 
     private final Map<Integer, Account> accounts = new HashMap<>();
     private int nextAccountNumber = 1000;
 
-    // ── OPEN ACCOUNT ─────────────────────────────────────────────────────────
+    // Open Account 
 
     public String openAccount(String name, String password, Currency currency, float initialBalance) {
         if (name == null || name.trim().isEmpty()) {
@@ -28,7 +25,7 @@ public class AccountStore {
         return "Account opened successfully. Account Number: " + newAccountNo;
     }
 
-    // ── CLOSE ACCOUNT ────────────────────────────────────────────────────────
+    // Close Account 
 
     public String closeAccount(String name, int accountNo, String password) {
         Account acc = accounts.get(accountNo);
@@ -45,7 +42,7 @@ public class AccountStore {
         return "Account " + accountNo + " closed successfully.";
     }
 
-    // ── DEPOSIT ──────────────────────────────────────────────────────────────
+    // Deposit Funds
 
     public String deposit(String name, int accountNo, String password, Currency currency, float amount) {
         Account acc = accounts.get(accountNo);
@@ -69,7 +66,7 @@ public class AccountStore {
         return "Deposit successful. New balance: " + acc.getBalance() + " " + acc.getCurrency();
     }
 
-    // ── WITHDRAW ─────────────────────────────────────────────────────────────
+    // Withdraw Funds
 
     public String withdraw(String name, int accountNo, String password, Currency currency, float amount) {
         Account acc = accounts.get(accountNo);
@@ -96,7 +93,7 @@ public class AccountStore {
         return "Withdrawal successful. New balance: " + acc.getBalance() + " " + acc.getCurrency();
     }
 
-    // ── CHECK BALANCE (idempotent) ────────────────────────────────────────────
+    // Check Balance - idempotent 
 
     public String checkBalance(String name, int accountNo, String password) {
         Account acc = accounts.get(accountNo);
@@ -113,7 +110,7 @@ public class AccountStore {
                 + " = " + acc.getBalance() + " " + acc.getCurrency();
     }
 
-    // ── TRANSFER MONEY (non-idempotent) ──────────────────────────────────────
+    // Transfer Funds (non-idempotent)
 
     public String transferMoney(String senderName, int senderAccountNo, String password,
                                 int recipientAccountNo, float amount) {
