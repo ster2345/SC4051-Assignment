@@ -15,8 +15,7 @@ public class ExperimentRunner {
         runExperiment3();
     }
 
-    //Experiment 1 AT-LEAST-ONCE + transferMoney + reply loss.
-    
+    // Experiment 1 AT-LEAST-ONCE + transferMoney + reply loss.
     private static void runExperiment1() {
         printBanner("EXPERIMENT 1: At-Least-Once + Non-Idempotent + Reply Loss");
 
@@ -131,7 +130,7 @@ public class ExperimentRunner {
         printSeparator();
     }
 
-    //Experiment 3 Idempotent operation (checkBalance) under both semantics.
+    // Experiment 3 Idempotent operation (checkBalance) under both semantics.
     private static void runExperiment3() {
         printBanner("EXPERIMENT 3: Idempotent Operation (checkBalance) — Both Semantics");
 
@@ -145,7 +144,7 @@ public class ExperimentRunner {
 
         int clientId = new java.util.Random().nextInt(100_000);
 
-        //AT-LEAST-ONCE
+        // AT-LEAST-ONCE
         System.out.println("--- Under AT-LEAST-ONCE ---");
         int    requestId1 = 1;
         String key1       = RetryClientLogic.buildKey(clientId, requestId1);
@@ -164,7 +163,7 @@ public class ExperimentRunner {
         System.out.println("[Exp3] Balance after repeated reads: UNCHANGED");
         System.out.println();
 
-        //AT-MOST-ONCE
+        // AT-MOST-ONCE
         System.out.println("--- Under AT-MOST-ONCE ---");
         RequestHistoryManager history  = new RequestHistoryManager();
         int    requestId2 = 2;
@@ -195,7 +194,7 @@ public class ExperimentRunner {
         printSeparator();
     }
 
-    //Helpers 
+    // Helpers 
     private static boolean simulateReplyLoss() {
         if (Math.random() < REPLY_LOSS_PROB) {
             System.out.println("[LossSimulator] DROPPED REPLY packet (prob=" + REPLY_LOSS_PROB + ")");
