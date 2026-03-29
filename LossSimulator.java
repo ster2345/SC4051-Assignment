@@ -3,54 +3,7 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.util.Random;
 
-/**
- * LossSimulator 
- *
- * Wraps DatagramSocket.send() to probabilistically drop outgoing packets,
- * simulating an unreliable UDP network.
- *
- * ─── Design ───────────────────────────────────────────────────────────────
- *
- * Two separate loss probabilities are used (as recommended in the spec):
- *
- *   requestLossProb  — used on the CLIENT side when sending a request.
- *                      Simulates the server never receiving the request.
- *
- *   replyLossProb   — used on the SERVER side when sending a reply.
- *                      Simulates the client never receiving the reply.
- *                      This is the key scenario that forces a retry and
- *                      exposes at-least-once vs at-most-once differences.
- *
- * To use on the client:
- *   LossSimulator sim = new LossSimulator(socket, 0.3, 0.0);
- *   sim.send(packet, "REQUEST");
- *
- * To use on the server:
- *   LossSimulator sim = new LossSimulator(socket, 0.0, 0.3);
- *   sim.send(packet, "REPLY");
- *
- * Setting both to 0.0 disables simulation (pass-through mode — useful for
- * Experiment 3, idempotent operations with no loss).
- *
- * ─── Experiment configuration guide ──────────────────────────────────────
- *
- *   Experiment 1 (at-least-once, non-idempotent, reply loss):
- *     server-side replyLossProb = 0.3
- *     semantics = at-least-once
- *     expected result: wrong balance (transfer applied multiple times)
- *
- *   Experiment 2 (at-most-once, non-idempotent, reply loss):
- *     server-side replyLossProb = 0.3
- *     semantics = at-most-once  (RequestHistoryManager enabled)
- *     expected result: correct balance (transfer applied exactly once)
- *
- *   Experiment 3 (idempotent operation, either semantic):
- *     operation = checkBalance
- *     either semantic is correct — state does not change on re-execution
- */
 public class LossSimulator {
-
-    // ─── Fields ──────────────────────────────────────────────────────────────
 
     private final DatagramSocket socket;
     private       double         requestLossProb;
@@ -61,13 +14,7 @@ public class LossSimulator {
     private int totalAttempts;
     private int totalDropped;
 
-    // ─── Constructor ─────────────────────────────────────────────────────────
-
-    /**
-     * @param socket          The underlying UDP socket (may be null in unit tests).
-     * @param requestLossProb Probability [0.0-1.0] of dropping REQUEST packets.
-     * @param replyLossProb   Probability [0.0-1.0] of dropping REPLY packets.
-     */
+    // Constructor
     public LossSimulator(DatagramSocket socket, double requestLossProb, double replyLossProb) {
         this.socket          = socket;
         this.requestLossProb = clamp(requestLossProb);
@@ -82,17 +29,7 @@ public class LossSimulator {
         this(socket, 0.0, 0.0);
     }
 
-    // ─── Public API ──────────────────────────────────────────────────────────
-
-    /**
-     * Attempts to send a packet, possibly dropping it based on the
-     * appropriate probability for its direction.
-     *
-     * @param packet  The datagram to send.
-     * @param label   "REQUEST" or "REPLY" or "CALLBACK" — determines which
-     *                loss probability to apply.
-     * @throws IOException if the underlying socket.send() throws.
-     */
+    // Public API
     public void send(DatagramPacket packet, String label) throws IOException {
         totalAttempts++;
         double prob = label.equalsIgnoreCase("REQUEST") ? requestLossProb : replyLossProb;
@@ -117,7 +54,7 @@ public class LossSimulator {
         send(packet, "PACKET");
     }
 
-    // ─── Configuration ───────────────────────────────────────────────────────
+    // Configuration 
 
     public void setRequestLossProb(double p) {
         this.requestLossProb = clamp(p);
@@ -132,8 +69,7 @@ public class LossSimulator {
     public double getRequestLossProb() { return requestLossProb; }
     public double getReplyLossProb()   { return replyLossProb; }
 
-    // ─── Statistics ──────────────────────────────────────────────────────────
-
+    // Statistics 
     public int getTotalAttempts() { return totalAttempts; }
     public int getTotalDropped()  { return totalDropped; }
 
@@ -157,13 +93,13 @@ public class LossSimulator {
         System.out.println("[LossSimulator] Stats reset.");
     }
 
-    // ─── Internal ────────────────────────────────────────────────────────────
+    // Internal 
 
     private static double clamp(double p) {
         return Math.max(0.0, Math.min(1.0, p));
     }
 
-    // ─── Quick self-test ─────────────────────────────────────────────────────
+    // Quick self-test 
 
     /**
      * Runs 20 simulated sends at 50% request loss and 30% reply loss,
