@@ -20,8 +20,6 @@ public class RequestHistoryManager {
 
     /**
      * Stores the reply for a freshly processed request.
-     * Must be called AFTER executing the operation and BEFORE sending the reply,
-     * so that any concurrent duplicate arriving during processing is handled.
      */
     public void storeReply(int clientId, int requestId, byte[] reply) {
         String key = buildKey(clientId, requestId);
@@ -40,7 +38,6 @@ public class RequestHistoryManager {
 
     /**
      * Returns the number of unique requests currently held in history.
-     * Useful for debugging and experiment logs.
      */
     public int size() {
         return history.size();
@@ -56,7 +53,6 @@ public class RequestHistoryManager {
 
     /**
      * Prints a human-readable summary of all history entries.
-     * Useful as a screenshot for the experiment report.
      */
     public void printHistory() {
         System.out.println("=== RequestHistoryManager — History Dump ===");
@@ -73,10 +69,6 @@ public class RequestHistoryManager {
     }
 
     // Internal helpers
-    /**
-     * Canonical key string: "clientId-requestId", e.g. "47832-3".
-     * Must match RetryClientLogic.buildKey() on the client side.
-     */
     public static String buildKey(int clientId, int requestId) {
         return clientId + "-" + requestId;
     }
