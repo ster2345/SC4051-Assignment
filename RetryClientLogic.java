@@ -2,32 +2,7 @@ import java.io.IOException;
 import java.net.*;
 import java.util.Random;
 
-/**
- * RetryClientLogic 
- *
- * Implements the client-side retry loop for both invocation semantics:
- *
- *   • AT-LEAST-ONCE  — retries on timeout; same requestId reused every attempt.
- *                      Server may execute the request multiple times.
- *   • AT-MOST-ONCE   — identical wire behaviour, but the server's
- *                      RequestHistoryManager deduplicates so execution happens once.
- *
- * Key rule (from spec): requestId is generated ONCE before the loop and is
- * NEVER regenerated on retry.  This allows the server to correlate all
- * retransmissions of the same logical request.
- *
- * Fully self-contained — no dependency on RequestTracker or InvocationClient.
- *
- * Message header layout (first 8 bytes of every request):
- *   [0-3]  clientId   (4 bytes, big-endian int)
- *   [4-7]  requestId  (4 bytes, big-endian int)
- *   [8..]  payload
- */
 public class RetryClientLogic {
-
-    // -----------------------------------------------------------------------
-    // Configuration
-    // -----------------------------------------------------------------------
 
     /** Maximum send attempts before giving up. */
     public static final int MAX_RETRIES = 3;
@@ -38,10 +13,6 @@ public class RetryClientLogic {
     /** Receive buffer size in bytes. */
     private static final int BUFFER_SIZE = 4096;
 
-    // -----------------------------------------------------------------------
-    // Fields
-    // -----------------------------------------------------------------------
-
     private final DatagramSocket socket;
     private final InetAddress    serverAddress;
     private final int            serverPort;
@@ -51,15 +22,7 @@ public class RetryClientLogic {
     private final int clientId;
     private int       requestCounter = 0;
 
-    // -----------------------------------------------------------------------
     // Constructor
-    // -----------------------------------------------------------------------
-
-    /**
-     * @param serverHost    IP or hostname of the server.
-     * @param serverPort    UDP port the server listens on.
-     * @param lossSimulator pre-configured LossSimulator (client-side, REQUEST loss).
-     */
     public RetryClientLogic(String serverHost, int serverPort, LossSimulator lossSimulator)
             throws SocketException, UnknownHostException {
         this.serverAddress = InetAddress.getByName(serverHost);
@@ -71,21 +34,7 @@ public class RetryClientLogic {
                 + "  server=" + serverHost + ":" + serverPort);
     }
 
-    // -----------------------------------------------------------------------
     // Public API — AT-LEAST-ONCE
-    // -----------------------------------------------------------------------
-
-    /**
-     * Sends payload with AT-LEAST-ONCE semantics.
-     *
-     * The same requestId is used on every retry attempt. If the reply is
-     * lost and the server has no duplicate-detection, it will re-execute
-     * the operation on each attempt — correct for idempotent ops but wrong
-     * for non-idempotent ones (e.g. transferMoney).
-     *
-     * @param payload marshalled operation bytes (everything after the 8-byte header)
-     * @return reply payload bytes, or null if all retries are exhausted
-     */
     public byte[] sendAtLeastOnce(byte[] payload) throws IOException {
         // Generate requestId ONCE — reused for all retries
         int requestId = nextRequestId();
@@ -120,21 +69,7 @@ public class RetryClientLogic {
         return null;
     }
 
-    // -----------------------------------------------------------------------
     // Public API — AT-MOST-ONCE
-    // -----------------------------------------------------------------------
-
-    /**
-     * Sends payload with AT-MOST-ONCE semantics.
-     *
-     * Wire behaviour is identical to at-least-once: the client retries on
-     * timeout using the SAME requestId. The guarantee is provided by the
-     * SERVER's RequestHistoryManager, which detects duplicates via
-     * (clientId, requestId) and returns the cached reply without re-executing.
-     *
-     * @param payload marshalled operation bytes
-     * @return reply payload bytes, or null if all retries are exhausted
-     */
     public byte[] sendAtMostOnce(byte[] payload) throws IOException {
         // Generate requestId ONCE — reused for all retries
         int requestId = nextRequestId();
@@ -169,18 +104,12 @@ public class RetryClientLogic {
         return null;
     }
 
-    // -----------------------------------------------------------------------
     // Accessors
-    // -----------------------------------------------------------------------
-
     public int getClientId()         { return clientId; }
     public int getCurrentRequestId() { return requestCounter; }
     public void close()              { socket.close(); }
 
-    // -----------------------------------------------------------------------
     // Inlined from RequestTracker
-    // -----------------------------------------------------------------------
-
     /** Increments and returns the next requestId. Called ONCE per new request. */
     private int nextRequestId() {
         requestCounter++;
@@ -197,17 +126,8 @@ public class RetryClientLogic {
         return clientId + "-" + requestId;
     }
 
-    // -----------------------------------------------------------------------
     // Inlined from InvocationClient — header marshalling helpers
-    // -----------------------------------------------------------------------
-
-    /**
-     * Prepends an 8-byte header (clientId + requestId, big-endian) to payload.
-     *
-     *   bytes [0-3]  clientId
-     *   bytes [4-7]  requestId
-     *   bytes [8..]  payload
-     */
+    /** Prepends an 8-byte header (clientId + requestId, big-endian) to payload. */
     public static byte[] wrapWithHeader(int clientId, int requestId, byte[] payload) {
         byte[] msg = new byte[8 + payload.length];
         writeInt(msg, 0, clientId);
@@ -240,10 +160,7 @@ public class RetryClientLogic {
         buf[offset + 3] = (byte)  (value        & 0xFF);
     }
 
-    // -----------------------------------------------------------------------
     // Quick self-test
-    // -----------------------------------------------------------------------
-
     public static void main(String[] args) {
         System.out.println("=== RetryClientLogic self-test ===");
 
