@@ -6,10 +6,7 @@ import java.util.List;
 
 public class MonitorManager {
 
-    // Inner class 
-    /**
-     * Holds registration info for one monitoring client.
-     */
+    // Inner class: holds registration info for one monitoring client.
     private static class MonitorEntry {
         final InetAddress address;
         final int         port;
@@ -53,10 +50,6 @@ public class MonitorManager {
     }
 
     // Public API
-    /**
-     * Registers a new monitoring client.
-     * Called by the server when it receives a REGISTER_MONITOR request.
-     */
     public void registerClient(InetAddress address, int port, int intervalSeconds) {
         long expiry = System.currentTimeMillis() + (long) intervalSeconds * 1000L;
         MonitorEntry entry = new MonitorEntry(address, port, expiry);
@@ -65,12 +58,6 @@ public class MonitorManager {
                 + "  | Total registered: " + entries.size());
     }
 
-    /**
-     * Sends an account-update callback to all non-expired monitoring clients.
-     * Call this from the server after EVERY account-modifying operation:
-     * open, close, deposit, withdraw, transfer.
-     * Expired clients are automatically removed before sending.
-     */
     public void notifyMonitors(String updateDescription) {
         purgeExpired();
 
@@ -126,11 +113,6 @@ public class MonitorManager {
         }
     }
 
-    /**
-     * Removes all expired monitor registrations from the list.
-     * Called automatically inside notifyMonitors().
-     * Also safe to call manually between operations.
-     */
     public void purgeExpired() {
         int before = entries.size();
         entries.removeIf(MonitorEntry::isExpired);
@@ -150,11 +132,6 @@ public class MonitorManager {
     }
 
     // Message helpers
-    /**
-     * Builds the raw callback byte array:
-     *   byte[0]   = OP_ACCOUNT_UPDATE
-     *   byte[1..] = UTF-8 updateDescription
-     */
     public static byte[] buildUpdateMessage(String updateDescription) {
         byte[] text = updateDescription.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         byte[] msg  = new byte[1 + text.length];
@@ -173,10 +150,6 @@ public class MonitorManager {
     }
 
     // Client-side helper: receive callbacks during monitoring window
-    /**
-     * Blocks on the client side for intervalSeconds, printing all incoming
-     * account-update callbacks.  Called after sending a REGISTER_MONITOR request.
-     */
     public static void receiveCallbacks(DatagramSocket clientSocket, int intervalSeconds) {
         long endTime = System.currentTimeMillis() + (long) intervalSeconds * 1000L;
         System.out.println("[MonitorManager-Client] Monitoring for "
