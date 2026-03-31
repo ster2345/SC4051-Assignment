@@ -5,15 +5,6 @@ import java.net.SocketTimeoutException;
 import java.util.Random;
 import java.util.Scanner;
 
-/**
- * Client — interactive console UDP banking client.
- *
- * Usage:
- *   java Client <serverHost> <serverPort> <at-least-once|at-most-once> [requestLossProb]
- *
- * Example:
- *   java Client 127.0.0.1 2222 at-most-once 0.3
- */
 public class Client {
 
     private static final int DEFAULT_SERVER_PORT = 2222;
@@ -58,8 +49,6 @@ public class Client {
         client.runMenu();
     }
 
-    // ── Main menu loop ────────────────────────────────────────────────────────
-
     private void runMenu() {
         try (Scanner scanner = new Scanner(System.in)) {
             boolean running = true;
@@ -86,8 +75,6 @@ public class Client {
             socket.close();
         }
     }
-
-    // ── Operation handlers ────────────────────────────────────────────────────
 
     private void handleOpenAccount(Scanner scanner) throws Exception {
         String   name           = readLine(scanner,  "Name: ");
@@ -163,12 +150,10 @@ public class Client {
         printReply(invokeWithRetry(payload));
     }
 
-    // ── Transport + retry ─────────────────────────────────────────────────────
 
-    /**
-     * Sends one logical request with retry.
-     * requestId is generated ONCE and never changed on retries.
-     */
+    //  sends one logical request with retry
+    //  requestId is generated once and never changed on retries
+
     private BankProtocol.Reply invokeWithRetry(byte[] requestPayload) throws Exception {
         int    requestId   = nextRequestId();
         String key         = RetryClientLogic.buildKey(clientId, requestId);
@@ -200,7 +185,6 @@ public class Client {
                 int    len  = replyPacket.getLength();
                 byte[] data = replyPacket.getData();
 
-                // Monitor callback — print and keep waiting for the real reply
                 String callback = MonitorManager.parseUpdateMessage(data, len);
                 if (callback != null) {
                     System.out.println("[CALLBACK] " + callback);
@@ -234,8 +218,6 @@ public class Client {
 
     private int nextRequestId() { return ++requestCounter; }
 
-    // ── Console helpers ───────────────────────────────────────────────────────
-
     private static void printMenu() {
         System.out.println();
         System.out.println("========== Banking Client ==========");
@@ -258,10 +240,6 @@ public class Client {
         System.out.println((reply.success ? "SUCCESS: " : "ERROR: ") + reply.message);
     }
 
-    /**
-     * Reads a Currency enum from console input.
-     * Shows valid options and re-prompts on invalid input.
-     */
     private static Currency readCurrency(Scanner scanner) {
         while (true) {
             System.out.print("Currency (" + Currency.menuOptions() + "): ");

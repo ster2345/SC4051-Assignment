@@ -1,46 +1,22 @@
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
-/**
- * BankProtocol — wire format definitions and marshalling helpers.
- *
- * Primitive encoding rules:
- *   int    : 4 bytes, big-endian
- *   float  : Float.floatToIntBits(), then big-endian int
- *   String : int length (bytes), then UTF-8 bytes
- *   Password: fixed-length UTF-8 field (PASSWORD_FIXED_BYTES), zero-padded
- *   Currency: 1 byte (enum ordinal: SGD=0, USD=1, EUR=2, GBP=3, JPY=4)
- */
 public final class BankProtocol {
 
     private BankProtocol() {}
-
-    // ── Operation codes ──────────────────────────────────────────────────────
 
     public static final byte OP_OPEN_ACCOUNT     = 1;
     public static final byte OP_CLOSE_ACCOUNT    = 2;
     public static final byte OP_DEPOSIT          = 3;
     public static final byte OP_WITHDRAW         = 4;
     public static final byte OP_REGISTER_MONITOR = 5;
-    public static final byte OP_CHECK_BALANCE    = 6;   // idempotent
-    public static final byte OP_TRANSFER_MONEY   = 7;   // non-idempotent
-
-    // ── Reply status codes ───────────────────────────────────────────────────
+    public static final byte OP_CHECK_BALANCE    = 6;
+    public static final byte OP_TRANSFER_MONEY   = 7;
 
     public static final byte STATUS_SUCCESS = 0;
     public static final byte STATUS_ERROR   = 1;
 
-    /**
-     * Fixed byte-length for password field on the wire.
-     *
-     * Assignment wording says password is fixed-length string.
-     * We implement this as fixed 16-byte UTF-8 field:
-     * - shorter passwords are zero-padded
-     * - longer passwords are rejected during marshalling
-     */
     public static final int PASSWORD_FIXED_BYTES = 16;
-
-    // ── Invocation semantics ─────────────────────────────────────────────────
 
     public enum InvocationSemantics {
         AT_LEAST_ONCE,
@@ -57,17 +33,14 @@ public final class BankProtocol {
         }
     }
 
-    // ── Decoded request model ────────────────────────────────────────────────
 
-    /**
-     * Generic decoded request. Only the fields relevant to the opCode are populated.
-     * currency is now a Currency enum (was String).
-     */
+    // only the fields relevant to the opCode are populated.
+
     public static class Request {
         public byte     opCode;
         public String   name;
         public String   password;
-        public Currency currency;           
+        public Currency currency;
         public int      accountNo;
         public int      recipientAccountNo;
         public float    amount;
@@ -80,7 +53,6 @@ public final class BankProtocol {
         public String  message;
     }
 
-    // ── Request marshalling ──────────────────────────────────────────────────
 
     public static byte[] marshalOpenAccountRequest(
             String name, String password, Currency currency, float initialBalance) {
@@ -88,7 +60,7 @@ public final class BankProtocol {
         w.putByte(OP_OPEN_ACCOUNT);
         w.putString(name);
         w.putFixedPassword(password);
-        w.putCurrency(currency);            
+        w.putCurrency(currency);
         w.putFloat(initialBalance);
         return w.toByteArray();
     }
@@ -155,8 +127,6 @@ public final class BankProtocol {
         return w.toByteArray();
     }
 
-    // ── Request unmarshalling (server-side) ───────────────────────────────────
-
     public static Request unmarshalRequest(byte[] payload, int length) {
         ByteReader r = new ByteReader(payload, length);
         Request req  = new Request();
@@ -214,7 +184,7 @@ public final class BankProtocol {
         return req;
     }
 
-    // ── Reply marshalling/unmarshalling ───────────────────────────────────────
+
 
     public static byte[] marshalReply(boolean success, String message) {
         ByteWriter w = new ByteWriter();
@@ -235,7 +205,7 @@ public final class BankProtocol {
         return reply;
     }
 
-    // ── ByteWriter ────────────────────────────────────────────────────────────
+
 
     private static class ByteWriter {
         private byte[] data = new byte[64];
@@ -264,9 +234,8 @@ public final class BankProtocol {
             pos += bytes.length;
         }
 
-        /**
-         * Writes password as fixed-size byte field (zero-padded).
-         */
+        //password fixed-size byte field (zero-padded)
+        
         void putFixedPassword(String password) {
             byte[] bytes = (password == null ? "" : password).getBytes(StandardCharsets.UTF_8);
             if (bytes.length > PASSWORD_FIXED_BYTES) {
@@ -300,7 +269,6 @@ public final class BankProtocol {
         }
     }
 
-    // ── ByteReader ────────────────────────────────────────────────────────────
 
     private static class ByteReader {
         private final byte[] data;
@@ -336,9 +304,9 @@ public final class BankProtocol {
             return s;
         }
 
-        /**
-         * Reads fixed-size password field and trims trailing zero padding bytes.
-         */
+        
+        // trims trailing zero padding bytes
+        
         String readFixedPassword() {
             require(PASSWORD_FIXED_BYTES);
 
