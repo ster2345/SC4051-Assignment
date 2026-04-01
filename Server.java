@@ -123,6 +123,9 @@ public class Server {
 			MonitorManager monitorManager) {
 
 		BankProtocol.Request request = BankProtocol.unmarshalRequest(payload, payloadLength);
+		
+		System.out.println("[Server] Operation: " + describeRequest(request));
+		
 		String message;
 		String update = null;
 
@@ -210,6 +213,31 @@ public class Server {
 			default:
 				return new ProcessResult(false, "ERROR: Unsupported operation code.", null);
 		}
+
+		System.out.println("[Server] Result " + message);
+
+		return new ProcessResult(isSuccessMessage(message), message, update);
+	}
+
+	private static String describeRequest(BankProtocol.Request req) {
+    switch (req.opCode) {
+        case BankProtocol.OP_OPEN_ACCOUNT:
+            return "OPEN_ACCOUNT | name=" + req.name + " | currency=" + req.currency + " | initialBalance=" + req.initialBalance;
+        case BankProtocol.OP_DEPOSIT:
+            return "DEPOSIT | name=" + req.name + " | acc=" + req.accountNo + " | amount=" + req.amount + " " + req.currency;
+        case BankProtocol.OP_WITHDRAW:
+            return "WITHDRAW | name=" + req.name + " | acc=" + req.accountNo + " | amount=" + req.amount + " " + req.currency;
+        case BankProtocol.OP_TRANSFER_MONEY:
+            return "TRANSFER | name=" + req.name + " | from=" + req.accountNo + " | to=" + req.recipientAccountNo + " | amount=" + req.amount;
+        case BankProtocol.OP_CHECK_BALANCE:
+            return "CHECK_BALANCE | name=" + req.name + " | acc=" + req.accountNo;
+        case BankProtocol.OP_CLOSE_ACCOUNT:
+            return "CLOSE_ACCOUNT | name=" + req.name + " | acc=" + req.accountNo;
+        case BankProtocol.OP_REGISTER_MONITOR:
+            return "REGISTER_MONITOR | interval=" + req.monitorIntervalSeconds + "s";
+        default:
+            return "UNKNOWN opCode=" + req.opCode;
+    	}
 	}
 
 	private static boolean isSuccessMessage(String message) {
