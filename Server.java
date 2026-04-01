@@ -136,6 +136,7 @@ public class Server {
 						request.password,
 						request.currency,
 						request.initialBalance);
+				System.out.println("[Server] Result: " + message);
 				if (isSuccessMessage(message)) {
 					update = "OPEN|name=" + request.name
 							+ "|currency=" + request.currency
@@ -145,6 +146,7 @@ public class Server {
 
 			case BankProtocol.OP_CLOSE_ACCOUNT:
 				message = accountStore.closeAccount(request.name, request.accountNo, request.password);
+				System.out.println("[Server] Result: " + message);
 				if (isSuccessMessage(message)) {
 					update = "CLOSE|acc=" + request.accountNo + "|name=" + request.name;
 				}
@@ -157,6 +159,7 @@ public class Server {
 					request.password,
 					request.currency,
 					request.amount);
+				System.out.println("[Server] Result: " + message);
 				if (isSuccessMessage(message)) {
 					update = "DEPOSIT|acc=" + request.accountNo
 							+ "|name=" + request.name
@@ -171,6 +174,7 @@ public class Server {
 						request.password,
 						request.currency,
 						request.amount);
+				System.out.println("[Server] Result: " + message);
 				if (isSuccessMessage(message)) {
 					update = "WITHDRAW|acc=" + request.accountNo
 							+ "|name=" + request.name
@@ -190,10 +194,12 @@ public class Server {
 						requestPacket.getPort(),
 						request.monitorIntervalSeconds);
 				message = "Monitor registered for " + request.monitorIntervalSeconds + " seconds.";
+				System.out.println("[Server] Result: " + message);
 				return new ProcessResult(true, message, null);
 
 			case BankProtocol.OP_CHECK_BALANCE:
 				message = accountStore.checkBalance(request.name, request.accountNo, request.password);
+				System.out.println("[Server] Result: " + message);
 				return new ProcessResult(isSuccessMessage(message), message, null);
 
 			case BankProtocol.OP_TRANSFER_MONEY:
@@ -203,6 +209,7 @@ public class Server {
 						request.password,
 						request.recipientAccountNo,
 						request.amount);
+				System.out.println("[Server] Result: " + message);
 				if (isSuccessMessage(message)) {
 					update = "TRANSFER|from=" + request.accountNo
 							+ "|to=" + request.recipientAccountNo
@@ -211,12 +218,9 @@ public class Server {
 				return new ProcessResult(isSuccessMessage(message), message, update);
 
 			default:
+				System.out.println("[Server] Result: ERROR - Unsupported operation code.");
 				return new ProcessResult(false, "ERROR: Unsupported operation code.", null);
 		}
-
-		System.out.println("[Server] Result " + message);
-
-		return new ProcessResult(isSuccessMessage(message), message, update);
 	}
 
 	private static String describeRequest(BankProtocol.Request req) {
